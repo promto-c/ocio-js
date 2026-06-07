@@ -1,0 +1,37 @@
+{
+  "name": "ocio-js",
+  "version": "0.1.0",
+  "description": "Real OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./src/ocio-js.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/ocio-js.d.ts",
+      "import": "./src/index.js"
+    }
+  },
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "test": "node --test test/*.test.js",
+    "serve:demo": "node scripts/serve-demo.mjs"
+  },
+  "keywords": [
+    "OpenColorIO",
+    "OCIO",
+    "ACES",
+    "wasm",
+    "color-management"
+  ],
+  "license": "BSD-3-Clause",
+  "files": [
+    "dist",
+    "examples",
+    "src",
+    "scripts",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
