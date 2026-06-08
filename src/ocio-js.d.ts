@@ -61,6 +61,54 @@ export interface DisplayViewProcessorOptions {
   optimization?: number | 'default' | 'none' | 'lossless' | 'very-good' | 'good' | 'draft';
 }
 
+export type GpuShaderLanguage =
+  | 'glsl'
+  | 'glsl_1.2'
+  | 'glsl_1.3'
+  | 'glsl_4.0'
+  | 'glsl_es_1.0'
+  | 'glsl_es_3.0'
+  | 'webgl'
+  | 'webgl1'
+  | 'webgl2';
+
+export interface GpuShaderOptions {
+  language?: GpuShaderLanguage;
+  functionName?: string;
+  resourcePrefix?: string;
+  textureMaxWidth?: number;
+  allowTexture1D?: boolean;
+}
+
+export interface OcioGpuTexture {
+  name: string;
+  samplerName: string;
+  width: number;
+  height: number;
+  depth: number;
+  dimensions: 1 | 2 | 3;
+  channels: 1 | 3;
+  interpolation: string;
+  values: Float32Array;
+}
+
+export interface OcioGpuUniform {
+  name: string;
+  type: 'double' | 'bool' | 'float3' | 'vector_float' | 'vector_int' | 'unknown';
+  bufferOffset: number;
+  value: number | boolean | number[];
+}
+
+export interface GpuShaderInfo {
+  shaderText: string;
+  functionName: string;
+  language: string;
+  cacheId: string;
+  uniformBufferSize: number;
+  textures: OcioGpuTexture[];
+  uniforms: OcioGpuUniform[];
+}
+
 export function createOCIO(options?: CreateOCIOOptions): Promise<OCIO>;
 
 export class OCIO {
@@ -107,4 +155,6 @@ export class Processor {
   applyRGBF32(rgb: Float32Array, options?: { copy?: boolean }): Float32Array;
   applyRGBAF32(rgba: Float32Array, options?: { copy?: boolean }): Float32Array;
   applyRGBA8(rgba: Uint8Array | Uint8ClampedArray, options?: { copy?: boolean }): Uint8Array | Uint8ClampedArray;
+  getGpuShaderInfo(options?: GpuShaderOptions): GpuShaderInfo;
+  getGpuShaderText(options?: GpuShaderOptions): string;
 }

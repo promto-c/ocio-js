@@ -1,6 +1,7 @@
 #include <OpenColorIO/OpenColorIO.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -26,6 +27,10 @@ struct ProcessorRecord
 {
     OCIO::ConstProcessorRcPtr processor;
     OCIO::ConstCPUProcessorRcPtr cpuProcessor;
+    OCIO::ConstGPUProcessorRcPtr gpuProcessor;
+    OCIO::GpuShaderDescRcPtr gpuShaderDesc;
+    int optimizationFlags = std::numeric_limits<int>::min();
+    std::string gpuShaderLanguage;
 };
 
 std::unordered_map<int, ProcessorRecord> g_processors;
@@ -104,6 +109,7 @@ int storeProcessor(const OCIO::ConstProcessorRcPtr & processor, int optimization
 {
     ProcessorRecord record;
     record.processor = processor;
+    record.optimizationFlags = optimizationFlags;
 
     if (optimizationFlags == std::numeric_limits<int>::min())
     {
@@ -120,6 +126,167 @@ int storeProcessor(const OCIO::ConstProcessorRcPtr & processor, int optimization
     const int handle = g_nextProcessorHandle++;
     g_processors.emplace(handle, record);
     return handle;
+}
+
+std::string normalizeGpuLanguage(const char * language)
+{
+    std::string value = language ? language : "";
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    std::replace(value.begin(), value.end(), '-', '_');
+
+    if (value.empty() || value == "glsl" || value == "webgl2")
+    {
+        return "glsl_es_3.0";
+    }
+    if (value == "webgl" || value == "webgl1")
+    {
+        return "glsl_es_1.0";
+    }
+    return value;
+}
+
+OCIO::ConstGPUProcessorRcPtr requireGPUProcessor(ProcessorRecord & record)
+{
+    if (!record.gpuProcessor)
+    {
+        if (record.optimizationFlags == std::numeric_limits<int>::min())
+        {
+            record.gpuProcessor = record.processor->getDefaultGPUProcessor();
+        }
+        else
+        {
+            record.gpuProcessor = record.processor->getOptimizedGPUProcessor(
+                static_cast<OCIO::OptimizationFlags>(record.optimizationFlags));
+        }
+    }
+    return record.gpuProcessor;
+}
+
+OCIO::GpuShaderDescRcPtr requireGpuShaderDesc(int handle)
+{
+    ProcessorRecord & record = requireProcessor(handle);
+    if (!record.gpuShaderDesc)
+    {
+        std::ostringstream stream;
+        stream << "No OCIO GPU shader info has been extracted for processor handle: " << handle;
+        throw std::runtime_error(stream.str());
+    }
+    return record.gpuShaderDesc;
+}
+
+struct GpuTextureInfo
+{
+    const float * values = nullptr;
+    const char * textureName = nullptr;
+    const char * samplerName = nullptr;
+    unsigned width = 0;
+    unsigned height = 0;
+    unsigned depth = 1;
+    int channels = 0;
+    int dimensions = 0;
+    OCIO::Interpolation interpolation = OCIO::INTERP_UNKNOWN;
+};
+
+GpuTextureInfo getGpuTextureInfo(const OCIO::GpuShaderDescRcPtr & shaderDesc, int index)
+{
+    if (index < 0)
+    {
+        throw std::runtime_error("Invalid OCIO GPU texture index");
+    }
+
+    const unsigned textureIndex = static_cast<unsigned>(index);
+    const unsigned texture3DCount = shaderDesc->getNum3DTextures();
+
+    GpuTextureInfo info;
+    if (textureIndex < texture3DCount)
+    {
+        unsigned edgeLength = 0;
+        shaderDesc->get3DTexture(textureIndex, info.textureName, info.samplerName, edgeLength, info.interpolation);
+        shaderDesc->get3DTextureValues(textureIndex, info.values);
+        info.width = edgeLength;
+        info.height = edgeLength;
+        info.depth = edgeLength;
+        info.channels = 3;
+        info.dimensions = 3;
+        return info;
+    }
+
+    const unsigned texture2DIndex = textureIndex - texture3DCount;
+    const unsigned texture2DCount = shaderDesc->getNumTextures();
+    if (texture2DIndex >= texture2DCount)
+    {
+        std::ostringstream stream;
+        stream << "OCIO GPU texture index out of range: " << index;
+        throw std::runtime_error(stream.str());
+    }
+
+    OCIO::GpuShaderDesc::TextureType channel = OCIO::GpuShaderDesc::TEXTURE_RGB_CHANNEL;
+    OCIO::GpuShaderDesc::TextureDimensions dimensions = OCIO::GpuShaderDesc::TEXTURE_1D;
+    shaderDesc->getTexture(
+        texture2DIndex,
+        info.textureName,
+        info.samplerName,
+        info.width,
+        info.height,
+        channel,
+        dimensions,
+        info.interpolation);
+    shaderDesc->getTextureValues(texture2DIndex, info.values);
+    info.depth = 1;
+    info.channels = channel == OCIO::GpuShaderDesc::TEXTURE_RGB_CHANNEL ? 3 : 1;
+    info.dimensions = static_cast<int>(dimensions);
+    return info;
+}
+
+int checkedIntCount(size_t count, const char * label)
+{
+    if (count > static_cast<size_t>(std::numeric_limits<int>::max()))
+    {
+        std::ostringstream stream;
+        stream << label << " is too large to expose through ocio-js";
+        throw std::runtime_error(stream.str());
+    }
+    return static_cast<int>(count);
+}
+
+OCIO::GpuShaderDesc::UniformData getGpuUniformData(
+    const OCIO::GpuShaderDescRcPtr & shaderDesc,
+    int index,
+    const char ** name = nullptr)
+{
+    if (index < 0)
+    {
+        throw std::runtime_error("Invalid OCIO GPU uniform index");
+    }
+
+    OCIO::GpuShaderDesc::UniformData data;
+    const char * uniformName = shaderDesc->getUniform(static_cast<unsigned>(index), data);
+    if (name)
+    {
+        *name = uniformName;
+    }
+    return data;
+}
+
+int getGpuUniformValueCount(const OCIO::GpuShaderDesc::UniformData & data)
+{
+    switch (data.m_type)
+    {
+        case OCIO::UNIFORM_DOUBLE:
+        case OCIO::UNIFORM_BOOL:
+            return 1;
+        case OCIO::UNIFORM_FLOAT3:
+            return 3;
+        case OCIO::UNIFORM_VECTOR_FLOAT:
+            return data.m_vectorFloat.m_getSize ? data.m_vectorFloat.m_getSize() : 0;
+        case OCIO::UNIFORM_VECTOR_INT:
+            return data.m_vectorInt.m_getSize ? data.m_vectorInt.m_getSize() : 0;
+        case OCIO::UNIFORM_UNKNOWN:
+        default:
+            return 0;
+    }
 }
 
 OCIO::TransformDirection parseDirection(int direction)
@@ -604,6 +771,264 @@ int ocio_processor_apply_rgba_u8(int handle, std::uint8_t * rgba, int pixelCount
     }
 
     return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_extract_gpu_shader_info(
+    int handle,
+    const char * language,
+    const char * functionName,
+    const char * resourcePrefix,
+    int textureMaxWidth,
+    int allowTexture1D)
+{
+    OCIO_BRIDGE_TRY
+    ProcessorRecord & record = requireProcessor(handle);
+    OCIO::GpuShaderDescRcPtr shaderDesc = OCIO::GpuShaderDesc::CreateShaderDesc();
+    const OCIO::GpuLanguage gpuLanguage = OCIO::GpuLanguageFromString(normalizeGpuLanguage(language).c_str());
+    shaderDesc->setLanguage(gpuLanguage);
+    shaderDesc->setFunctionName((functionName && functionName[0]) ? functionName : "OCIODisplay");
+    shaderDesc->setResourcePrefix((resourcePrefix && resourcePrefix[0]) ? resourcePrefix : "ocio");
+    shaderDesc->setAllowTexture1D(allowTexture1D != 0);
+    if (textureMaxWidth > 0)
+    {
+        shaderDesc->setTextureMaxWidth(static_cast<unsigned>(textureMaxWidth));
+    }
+
+    OCIO::ConstGPUProcessorRcPtr gpuProcessor = requireGPUProcessor(record);
+    gpuProcessor->extractGpuShaderInfo(shaderDesc);
+
+    record.gpuShaderDesc = shaderDesc;
+    record.gpuShaderLanguage = OCIO::GpuLanguageToString(gpuLanguage);
+    return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_processor_get_gpu_shader_text(int handle)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireGpuShaderDesc(handle)->getShaderText());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_processor_get_gpu_shader_language(int handle)
+{
+    OCIO_BRIDGE_TRY
+    ProcessorRecord & record = requireProcessor(handle);
+    requireGpuShaderDesc(handle);
+    return result(record.gpuShaderLanguage);
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_processor_get_gpu_shader_function_name(int handle)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireGpuShaderDesc(handle)->getFunctionName());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_processor_get_gpu_shader_cache_id(int handle)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireGpuShaderDesc(handle)->getCacheID());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_processor_get_gpu_shader_uniform_buffer_size(int handle)
+{
+    OCIO_BRIDGE_TRY
+    return checkedIntCount(requireGpuShaderDesc(handle)->getUniformBufferSize(), "OCIO GPU uniform buffer");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_get_gpu_shader_texture_count(int handle)
+{
+    OCIO_BRIDGE_TRY
+    OCIO::GpuShaderDescRcPtr shaderDesc = requireGpuShaderDesc(handle);
+    return checkedIntCount(
+        static_cast<size_t>(shaderDesc->getNum3DTextures()) + static_cast<size_t>(shaderDesc->getNumTextures()),
+        "OCIO GPU texture count");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_processor_get_gpu_shader_texture_name(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return result(getGpuTextureInfo(requireGpuShaderDesc(handle), index).textureName);
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_processor_get_gpu_shader_texture_sampler_name(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return result(getGpuTextureInfo(requireGpuShaderDesc(handle), index).samplerName);
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_processor_get_gpu_shader_texture_width(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return checkedIntCount(getGpuTextureInfo(requireGpuShaderDesc(handle), index).width, "OCIO GPU texture width");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_get_gpu_shader_texture_height(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return checkedIntCount(getGpuTextureInfo(requireGpuShaderDesc(handle), index).height, "OCIO GPU texture height");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_get_gpu_shader_texture_depth(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return checkedIntCount(getGpuTextureInfo(requireGpuShaderDesc(handle), index).depth, "OCIO GPU texture depth");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_get_gpu_shader_texture_dimensions(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return getGpuTextureInfo(requireGpuShaderDesc(handle), index).dimensions;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_get_gpu_shader_texture_channels(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return getGpuTextureInfo(requireGpuShaderDesc(handle), index).channels;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_processor_get_gpu_shader_texture_interpolation(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return result(OCIO::InterpolationToString(getGpuTextureInfo(requireGpuShaderDesc(handle), index).interpolation));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_processor_get_gpu_shader_texture_value_count(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    const GpuTextureInfo info = getGpuTextureInfo(requireGpuShaderDesc(handle), index);
+    const size_t valueCount = static_cast<size_t>(info.width)
+        * static_cast<size_t>(info.height)
+        * static_cast<size_t>(info.depth)
+        * static_cast<size_t>(info.channels);
+    return checkedIntCount(valueCount, "OCIO GPU texture value count");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const float * ocio_processor_get_gpu_shader_texture_values(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return getGpuTextureInfo(requireGpuShaderDesc(handle), index).values;
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_processor_get_gpu_shader_uniform_count(int handle)
+{
+    OCIO_BRIDGE_TRY
+    return checkedIntCount(requireGpuShaderDesc(handle)->getNumUniforms(), "OCIO GPU uniform count");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_processor_get_gpu_shader_uniform_name(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    const char * name = nullptr;
+    getGpuUniformData(requireGpuShaderDesc(handle), index, &name);
+    return result(name);
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_processor_get_gpu_shader_uniform_type(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return static_cast<int>(getGpuUniformData(requireGpuShaderDesc(handle), index).m_type);
+    OCIO_BRIDGE_CATCH(static_cast<int>(OCIO::UNIFORM_UNKNOWN))
+}
+
+int ocio_processor_get_gpu_shader_uniform_buffer_offset(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return checkedIntCount(
+        getGpuUniformData(requireGpuShaderDesc(handle), index).m_bufferOffset,
+        "OCIO GPU uniform buffer offset");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_get_gpu_shader_uniform_value_count(int handle, int index)
+{
+    OCIO_BRIDGE_TRY
+    return getGpuUniformValueCount(getGpuUniformData(requireGpuShaderDesc(handle), index));
+    OCIO_BRIDGE_CATCH(0)
+}
+
+double ocio_processor_get_gpu_shader_uniform_value_f64(int handle, int index, int valueIndex)
+{
+    OCIO_BRIDGE_TRY
+    if (valueIndex < 0)
+    {
+        throw std::runtime_error("Invalid OCIO GPU uniform value index");
+    }
+    const OCIO::GpuShaderDesc::UniformData data = getGpuUniformData(requireGpuShaderDesc(handle), index);
+    const int count = getGpuUniformValueCount(data);
+    if (valueIndex >= count)
+    {
+        throw std::runtime_error("OCIO GPU uniform value index out of range");
+    }
+
+    switch (data.m_type)
+    {
+        case OCIO::UNIFORM_DOUBLE:
+            return data.m_getDouble ? data.m_getDouble() : 0.0;
+        case OCIO::UNIFORM_BOOL:
+            return (data.m_getBool && data.m_getBool()) ? 1.0 : 0.0;
+        case OCIO::UNIFORM_FLOAT3:
+            return data.m_getFloat3 ? static_cast<double>(data.m_getFloat3()[valueIndex]) : 0.0;
+        case OCIO::UNIFORM_VECTOR_FLOAT:
+            return data.m_vectorFloat.m_getVector
+                ? static_cast<double>(data.m_vectorFloat.m_getVector()[valueIndex])
+                : 0.0;
+        case OCIO::UNIFORM_VECTOR_INT:
+            return data.m_vectorInt.m_getVector
+                ? static_cast<double>(data.m_vectorInt.m_getVector()[valueIndex])
+                : 0.0;
+        case OCIO::UNIFORM_UNKNOWN:
+        default:
+            return 0.0;
+    }
+    OCIO_BRIDGE_CATCH(0.0)
+}
+
+int ocio_processor_get_gpu_shader_uniform_value_i32(int handle, int index, int valueIndex)
+{
+    OCIO_BRIDGE_TRY
+    if (valueIndex < 0)
+    {
+        throw std::runtime_error("Invalid OCIO GPU uniform value index");
+    }
+    const OCIO::GpuShaderDesc::UniformData data = getGpuUniformData(requireGpuShaderDesc(handle), index);
+    const int count = getGpuUniformValueCount(data);
+    if (valueIndex >= count)
+    {
+        throw std::runtime_error("OCIO GPU uniform value index out of range");
+    }
+
+    switch (data.m_type)
+    {
+        case OCIO::UNIFORM_BOOL:
+            return (data.m_getBool && data.m_getBool()) ? 1 : 0;
+        case OCIO::UNIFORM_VECTOR_INT:
+            return data.m_vectorInt.m_getVector ? data.m_vectorInt.m_getVector()[valueIndex] : 0;
+        case OCIO::UNIFORM_DOUBLE:
+        case OCIO::UNIFORM_FLOAT3:
+        case OCIO::UNIFORM_VECTOR_FLOAT:
+        case OCIO::UNIFORM_UNKNOWN:
+        default:
+            return static_cast<int>(ocio_processor_get_gpu_shader_uniform_value_f64(handle, index, valueIndex));
+    }
     OCIO_BRIDGE_CATCH(0)
 }
 

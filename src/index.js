@@ -1,3 +1,5 @@
+export const ACES_CG_V2_CONFIG = 'ocio://cg-config-v2.2.0_aces-v1.3_ocio-v2.4';
+export const ACES_STUDIO_V2_CONFIG = 'ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4';
 export const ACES_CG_V4_CONFIG = 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5';
 export const ACES_STUDIO_V4_CONFIG = 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
 
@@ -16,6 +18,16 @@ export const OptimizationFlags = Object.freeze({
 });
 
 const DEFAULT_MODULE_PATH = '../dist/ocio-wasm.js';
+const DEFAULT_GPU_SHADER_FUNCTION = 'OCIODisplay';
+const DEFAULT_GPU_RESOURCE_PREFIX = 'ocio';
+const GPU_UNIFORM_TYPES = Object.freeze([
+  'double',
+  'bool',
+  'float3',
+  'vector_float',
+  'vector_int',
+  'unknown'
+]);
 
 function assertTypedArray(value, type, name) {
   if (!(value instanceof type)) {
@@ -42,6 +54,31 @@ function toOptimizationFlags(value) {
     return OptimizationFlags[key];
   }
   throw new Error(`Unknown OCIO optimization mode: ${value}`);
+}
+
+function normalizeGpuLanguage(value) {
+  if (value === undefined || value === null || value === '' || value === 'glsl') {
+    return 'glsl_es_3.0';
+  }
+  const language = String(value).toLowerCase().replace(/-/g, '_');
+  if (language === 'webgl' || language === 'webgl1') {
+    return 'glsl_es_1.0';
+  }
+  if (language === 'webgl2') {
+    return 'glsl_es_3.0';
+  }
+  return language;
+}
+
+function toPositiveInteger(value, name) {
+  if (value === undefined || value === null) {
+    return 0;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new RangeError(`${name} must be a positive finite number`);
+  }
+  return Math.floor(number);
 }
 
 export async function createOCIO(options = {}) {
@@ -413,6 +450,42 @@ export class Processor {
     }
   }
 
+  getGpuShaderInfo(options = {}) {
+    const language = normalizeGpuLanguage(options.language);
+    const functionName = options.functionName ?? DEFAULT_GPU_SHADER_FUNCTION;
+    const resourcePrefix = options.resourcePrefix ?? DEFAULT_GPU_RESOURCE_PREFIX;
+    const textureMaxWidth = toPositiveInteger(options.textureMaxWidth, 'textureMaxWidth');
+    const allowTexture1D = options.allowTexture1D === true ? 1 : 0;
+
+    this.ocio._withCStrings([language, functionName, resourcePrefix], ([languagePtr, functionNamePtr, resourcePrefixPtr]) => {
+      this.ocio._assertStatus(
+        this.ocio.module._ocio_processor_extract_gpu_shader_info(
+          this.handle,
+          languagePtr,
+          functionNamePtr,
+          resourcePrefixPtr,
+          textureMaxWidth,
+          allowTexture1D
+        ),
+        'OCIO GPU shader extraction failed'
+      );
+    });
+
+    return {
+      shaderText: this.ocio._string('ocio_processor_get_gpu_shader_text', this.handle),
+      functionName: this.ocio._string('ocio_processor_get_gpu_shader_function_name', this.handle),
+      language: this.ocio._string('ocio_processor_get_gpu_shader_language', this.handle),
+      cacheId: this.ocio._string('ocio_processor_get_gpu_shader_cache_id', this.handle),
+      uniformBufferSize: this.ocio.module._ocio_processor_get_gpu_shader_uniform_buffer_size(this.handle),
+      textures: this._getGpuShaderTextures(),
+      uniforms: this._getGpuShaderUniforms()
+    };
+  }
+
+  getGpuShaderText(options = {}) {
+    return this.getGpuShaderInfo(options).shaderText;
+  }
+
   _applyFloat32(target, channels, functionName) {
     const byteLength = target.byteLength;
     const pointer = this.ocio.module._malloc(byteLength);
@@ -430,5 +503,58 @@ export class Processor {
     } finally {
       this.ocio.module._free(pointer);
     }
+  }
+
+  _getGpuShaderTextures() {
+    const count = this.ocio.module._ocio_processor_get_gpu_shader_texture_count(this.handle);
+    return Array.from({ length: count }, (_, index) => {
+      const valueCount = this.ocio.module._ocio_processor_get_gpu_shader_texture_value_count(this.handle, index);
+      const valuesPointer = this.ocio.module._ocio_processor_get_gpu_shader_texture_values(this.handle, index);
+      if (!valuesPointer && valueCount > 0) {
+        throw new Error(`Could not read OCIO GPU texture values: ${this.ocio.lastError}`);
+      }
+      const valuesOffset = valuesPointer / Float32Array.BYTES_PER_ELEMENT;
+      return {
+        name: this.ocio._string('ocio_processor_get_gpu_shader_texture_name', this.handle, index),
+        samplerName: this.ocio._string('ocio_processor_get_gpu_shader_texture_sampler_name', this.handle, index),
+        width: this.ocio.module._ocio_processor_get_gpu_shader_texture_width(this.handle, index),
+        height: this.ocio.module._ocio_processor_get_gpu_shader_texture_height(this.handle, index),
+        depth: this.ocio.module._ocio_processor_get_gpu_shader_texture_depth(this.handle, index),
+        dimensions: this.ocio.module._ocio_processor_get_gpu_shader_texture_dimensions(this.handle, index),
+        channels: this.ocio.module._ocio_processor_get_gpu_shader_texture_channels(this.handle, index),
+        interpolation: this.ocio._string('ocio_processor_get_gpu_shader_texture_interpolation', this.handle, index),
+        values: new Float32Array(this.ocio.module.HEAPF32.subarray(valuesOffset, valuesOffset + valueCount))
+      };
+    });
+  }
+
+  _getGpuShaderUniforms() {
+    const count = this.ocio.module._ocio_processor_get_gpu_shader_uniform_count(this.handle);
+    return Array.from({ length: count }, (_, index) => {
+      const typeId = this.ocio.module._ocio_processor_get_gpu_shader_uniform_type(this.handle, index);
+      const type = GPU_UNIFORM_TYPES[typeId] ?? 'unknown';
+      const valueCount = this.ocio.module._ocio_processor_get_gpu_shader_uniform_value_count(this.handle, index);
+      let value;
+      if (type === 'bool') {
+        value = this.ocio.module._ocio_processor_get_gpu_shader_uniform_value_i32(this.handle, index, 0) !== 0;
+      } else if (type === 'vector_int') {
+        value = Array.from({ length: valueCount }, (_, valueIndex) => (
+          this.ocio.module._ocio_processor_get_gpu_shader_uniform_value_i32(this.handle, index, valueIndex)
+        ));
+      } else if (valueCount === 1) {
+        value = this.ocio.module._ocio_processor_get_gpu_shader_uniform_value_f64(this.handle, index, 0);
+      } else {
+        value = Array.from({ length: valueCount }, (_, valueIndex) => (
+          this.ocio.module._ocio_processor_get_gpu_shader_uniform_value_f64(this.handle, index, valueIndex)
+        ));
+      }
+
+      return {
+        name: this.ocio._string('ocio_processor_get_gpu_shader_uniform_name', this.handle, index),
+        type,
+        bufferOffset: this.ocio.module._ocio_processor_get_gpu_shader_uniform_buffer_offset(this.handle, index),
+        value
+      };
+    });
   }
 }

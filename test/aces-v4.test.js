@@ -71,6 +71,24 @@ test('OpenColorIO 2.5 wasm loads the ACES v4 built-in CG config', async (t) => {
   assert.equal(pixels[7], 1.0);
   assert.equal(pixels[11], 1.0);
 
+  const shaderInfo = processor.getGpuShaderInfo({
+    language: 'glsl_es_3.0',
+    functionName: 'OCIODisplay',
+    allowTexture1D: false
+  });
+  assert.equal(shaderInfo.language, 'glsl_es_3.0');
+  assert.equal(shaderInfo.functionName, 'OCIODisplay');
+  assert.match(shaderInfo.shaderText, /OCIODisplay/);
+  assert.equal(Array.isArray(shaderInfo.textures), true);
+  assert.equal(Array.isArray(shaderInfo.uniforms), true);
+  for (const texture of shaderInfo.textures) {
+    assert.ok(texture.width > 0);
+    assert.ok(texture.height > 0);
+    assert.ok(texture.depth > 0);
+    assert.ok(texture.values instanceof Float32Array);
+    assert.equal(texture.values.length, texture.width * texture.height * texture.depth * texture.channels);
+  }
+
   const gamutProcessor = config.createColorSpaceProcessor('ACEScg', 'ACES2065-1');
   const red = gamutProcessor.applyRGBF32(new Float32Array([1, 0, 0]), { copy: true });
   assert.equal(red.length, 3);

@@ -1,4 +1,4 @@
-import { ACES_CG_V4_CONFIG, createOCIO } from '../../src/index.js';
+import { ACES_CG_V2_CONFIG, createOCIO } from '../../src/index.js';
 
 const width = 960;
 const height = 540;
@@ -25,8 +25,6 @@ const elements = {
   configInfo: document.querySelector('#configInfo')
 };
 
-const context = elements.canvas.getContext('2d', { willReadFrequently: true });
-
 const ocioFileInput = document.createElement('input');
 ocioFileInput.type = 'file';
 ocioFileInput.accept = '.ocio';
@@ -36,7 +34,284 @@ document.body.appendChild(ocioFileInput);
 let ocio;
 let config;
 let processor;
+let cpuContext = null;
+const webglRenderer = createWebGLRenderer(elements.canvas);
+if (!webglRenderer) {
+  cpuContext = elements.canvas.getContext('2d', { willReadFrequently: true });
+}
 let sourcePixels = createSamplePixels(width, height);
+
+function createWebGLRenderer(canvas) {
+  const gl = canvas.getContext('webgl2', { premultipliedAlpha: false });
+  if (!gl) {
+    return null;
+  }
+
+  const vertexShaderSource = `#version 300 es
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec2 a_uv;
+out vec2 v_uv;
+
+void main() {
+  gl_Position = vec4(a_position, 0.0, 1.0);
+  v_uv = a_uv;
+}`;
+
+  const passthroughFragmentSource = `#version 300 es
+precision highp float;
+
+uniform sampler2D u_image;
+in vec2 v_uv;
+out vec4 fragColor;
+
+void main() {
+  fragColor = texture(u_image, v_uv);
+}`;
+
+  const vertexShader = compileShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+  const vao = gl.createVertexArray();
+  const quadBuffer = gl.createBuffer();
+  const quadVertices = new Float32Array([
+    -1, -1, 0, 1,
+    1, -1, 1, 1,
+    -1, 1, 0, 0,
+    -1, 1, 0, 0,
+    1, -1, 1, 1,
+    1, 1, 1, 0
+  ]);
+
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+  gl.bindVertexArray(null);
+
+  const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+  const maxTextureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);
+  const supportsLinearFloatTextures = Boolean(gl.getExtension('OES_texture_float_linear'));
+  const programCache = new Map();
+  const passthroughProgram = createProgram(gl, vertexShader, passthroughFragmentSource);
+  let sourceTexture = null;
+  let ocioTextures = [];
+
+  function getOcioProgram(shaderInfo) {
+    const key = shaderInfo.cacheId || shaderInfo.shaderText;
+    if (!programCache.has(key)) {
+      programCache.set(key, createProgram(gl, vertexShader, buildOcioFragmentShader(shaderInfo)));
+    }
+    return programCache.get(key);
+  }
+
+  function bindSourceTexture(pixels, type = gl.FLOAT) {
+    if (!sourceTexture) {
+      sourceTexture = gl.createTexture();
+    }
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (type === gl.FLOAT) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, width, height, 0, gl.RGBA, gl.FLOAT, pixels);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+    }
+    checkGLError(gl, 'source texture upload');
+  }
+
+  function deleteOcioTextures() {
+    for (const texture of ocioTextures) {
+      gl.deleteTexture(texture);
+    }
+    ocioTextures = [];
+  }
+
+  function uploadOcioTextures(shaderInfo) {
+    if (shaderInfo.textures.length + 1 > maxTextureUnits) {
+      throw new Error(`OCIO GPU shader needs ${shaderInfo.textures.length + 1} texture units, but WebGL exposes ${maxTextureUnits}`);
+    }
+    if (!supportsLinearFloatTextures && shaderInfo.textures.some((texture) => texture.interpolation !== 'nearest')) {
+      throw new Error('WebGL float texture linear filtering is unavailable');
+    }
+
+    deleteOcioTextures();
+    shaderInfo.textures.forEach((texture, index) => {
+      if (texture.dimensions === 1) {
+        throw new Error('WebGL does not support 1D OCIO LUT textures');
+      }
+
+      const unit = index + 1;
+      const target = texture.dimensions === 3 ? gl.TEXTURE_3D : gl.TEXTURE_2D;
+      const gpuTexture = gl.createTexture();
+      const format = texture.channels === 1
+        ? { internal: gl.R32F, external: gl.RED }
+        : { internal: gl.RGB32F, external: gl.RGB };
+
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(target, gpuTexture);
+      gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, texture.interpolation === 'nearest' ? gl.NEAREST : gl.LINEAR);
+      gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, texture.interpolation === 'nearest' ? gl.NEAREST : gl.LINEAR);
+      gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(target, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      if (target === gl.TEXTURE_3D) {
+        gl.texParameteri(target, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
+        gl.texImage3D(
+          target,
+          0,
+          format.internal,
+          texture.width,
+          texture.height,
+          texture.depth,
+          0,
+          format.external,
+          gl.FLOAT,
+          texture.values
+        );
+      } else {
+        gl.texImage2D(
+          target,
+          0,
+          format.internal,
+          texture.width,
+          texture.height,
+          0,
+          format.external,
+          gl.FLOAT,
+          texture.values
+        );
+      }
+      checkGLError(gl, `OCIO texture upload: ${texture.name}`);
+      ocioTextures.push(gpuTexture);
+    });
+  }
+
+  function bindOcioUniforms(program, shaderInfo, params) {
+    gl.uniform1i(gl.getUniformLocation(program, 'u_image'), 0);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_exposureScale'), params.exposureScale);
+    gl.uniform1f(gl.getUniformLocation(program, 'u_inverseGamma'), params.inverseGamma);
+
+    shaderInfo.textures.forEach((texture, index) => {
+      const location = gl.getUniformLocation(program, texture.samplerName);
+      if (location) {
+        gl.uniform1i(location, index + 1);
+      }
+    });
+
+    shaderInfo.uniforms.forEach((uniform) => {
+      const location = gl.getUniformLocation(program, uniform.name);
+      if (!location) {
+        return;
+      }
+      if (uniform.type === 'bool') {
+        gl.uniform1i(location, uniform.value ? 1 : 0);
+      } else if (uniform.type === 'float3') {
+        gl.uniform3fv(location, new Float32Array(uniform.value));
+      } else if (uniform.type === 'vector_float') {
+        gl.uniform1fv(location, new Float32Array(uniform.value));
+      } else if (uniform.type === 'vector_int') {
+        gl.uniform1iv(location, new Int32Array(uniform.value));
+      } else if (typeof uniform.value === 'number') {
+        gl.uniform1f(location, uniform.value);
+      }
+    });
+  }
+
+  function draw(program) {
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(program);
+    gl.bindVertexArray(vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.bindVertexArray(null);
+  }
+
+  return {
+    renderOcio(processorHandle, pixels, params) {
+      const shaderInfo = processorHandle.getGpuShaderInfo({
+        language: 'glsl_es_3.0',
+        functionName: 'OCIODisplay',
+        resourcePrefix: 'ocio',
+        textureMaxWidth: maxTextureSize,
+        allowTexture1D: false
+      });
+      const program = getOcioProgram(shaderInfo);
+      bindSourceTexture(pixels, gl.FLOAT);
+      uploadOcioTextures(shaderInfo);
+      gl.useProgram(program);
+      bindOcioUniforms(program, shaderInfo, params);
+      draw(program);
+      checkGLError(gl, 'OCIO WebGL render');
+      return shaderInfo;
+    },
+
+    renderBytes(bytes) {
+      bindSourceTexture(bytes, gl.UNSIGNED_BYTE);
+      gl.useProgram(passthroughProgram);
+      gl.uniform1i(gl.getUniformLocation(passthroughProgram, 'u_image'), 0);
+      draw(passthroughProgram);
+    }
+  };
+}
+
+function buildOcioFragmentShader(shaderInfo) {
+  return `#version 300 es
+precision highp float;
+precision highp int;
+
+uniform sampler2D u_image;
+uniform float u_exposureScale;
+uniform float u_inverseGamma;
+in vec2 v_uv;
+out vec4 fragColor;
+
+${shaderInfo.shaderText}
+
+void main() {
+  vec4 color = texture(u_image, v_uv);
+  color.rgb = pow(max(color.rgb * u_exposureScale, vec3(0.0)), vec3(u_inverseGamma));
+  fragColor = ${shaderInfo.functionName}(color);
+}`;
+}
+
+function compileShader(gl, type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+    const log = gl.getShaderInfoLog(shader);
+    gl.deleteShader(shader);
+    throw new Error(log || 'WebGL shader compilation failed');
+  }
+  return shader;
+}
+
+function createProgram(gl, vertexShader, fragmentSource) {
+  const fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+  const program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  gl.deleteShader(fragmentShader);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    const log = gl.getProgramInfoLog(program);
+    gl.deleteProgram(program);
+    throw new Error(log || 'WebGL shader link failed');
+  }
+  return program;
+}
+
+function checkGLError(gl, label) {
+  const error = gl.getError();
+  if (error !== gl.NO_ERROR) {
+    throw new Error(`${label} failed with WebGL error 0x${error.toString(16)}`);
+  }
+}
 
 function setStatus(message, kind = '') {
   elements.status.textContent = message;
@@ -117,36 +392,72 @@ function rebuildProcessor() {
   });
 }
 
+function readToneControls() {
+  const exposure = Number(elements.exposure.value);
+  const gain = Number(elements.gain.value);
+  const gamma = Number(elements.gamma.value);
+  elements.exposureValue.value = exposure.toFixed(2);
+  elements.gainValue.value = gain.toFixed(2);
+  elements.gammaValue.value = gamma.toFixed(2);
+  return {
+    exposure,
+    gain,
+    gamma,
+    exposureScale: gain * (2 ** exposure),
+    inverseGamma: 1 / gamma
+  };
+}
+
+function renderCpu(params) {
+  const working = new Float32Array(sourcePixels);
+  for (let index = 0; index < working.length; index += 4) {
+    working[index] = Math.max(0, working[index] * params.exposureScale) ** params.inverseGamma;
+    working[index + 1] = Math.max(0, working[index + 1] * params.exposureScale) ** params.inverseGamma;
+    working[index + 2] = Math.max(0, working[index + 2] * params.exposureScale) ** params.inverseGamma;
+  }
+
+  processor.applyRGBAF32(working);
+
+  const output = cpuContext?.createImageData(width, height) ?? new ImageData(width, height);
+  for (let index = 0; index < working.length; index += 4) {
+    output.data[index] = toByte(working[index]);
+    output.data[index + 1] = toByte(working[index + 1]);
+    output.data[index + 2] = toByte(working[index + 2]);
+    output.data[index + 3] = toByte(working[index + 3]);
+  }
+
+  if (webglRenderer) {
+    webglRenderer.renderBytes(output.data);
+  } else {
+    cpuContext.putImageData(output, 0, 0);
+  }
+}
+
+function renderStatus(renderer, detail = '') {
+  const suffix = detail ? ` (${renderer}: ${detail})` : ` (${renderer})`;
+  return `${elements.source.value} through ${elements.display.value} / ${elements.view.value}${suffix}`;
+}
+
 function render() {
   try {
     rebuildProcessor();
+    const params = readToneControls();
 
-    const exposure = Number(elements.exposure.value);
-    const gain = Number(elements.gain.value);
-    const gamma = Number(elements.gamma.value);
-    elements.exposureValue.value = exposure.toFixed(2);
-    elements.gainValue.value = gain.toFixed(2);
-    elements.gammaValue.value = gamma.toFixed(2);
-
-    const working = new Float32Array(sourcePixels);
-    const exposureScale = gain * (2 ** exposure);
-    for (let index = 0; index < working.length; index += 4) {
-      working[index] = Math.max(0, working[index] * exposureScale) ** (1 / gamma);
-      working[index + 1] = Math.max(0, working[index + 1] * exposureScale) ** (1 / gamma);
-      working[index + 2] = Math.max(0, working[index + 2] * exposureScale) ** (1 / gamma);
+    if (webglRenderer) {
+      try {
+        const shaderInfo = webglRenderer.renderOcio(processor, sourcePixels, params);
+        setStatus(renderStatus('GPU', `${shaderInfo.textures.length} LUT textures`), 'ok');
+        return;
+      } catch (gpuError) {
+        renderCpu(params);
+        const message = gpuError instanceof Error ? gpuError.message.split('\n')[0] : String(gpuError);
+        setStatus(renderStatus('CPU fallback', message), 'ok');
+        return;
+      }
     }
 
-    processor.applyRGBAF32(working);
-
-    const output = context.createImageData(width, height);
-    for (let index = 0; index < working.length; index += 4) {
-      output.data[index] = toByte(working[index]);
-      output.data[index + 1] = toByte(working[index + 1]);
-      output.data[index + 2] = toByte(working[index + 2]);
-      output.data[index + 3] = toByte(working[index + 3]);
-    }
-    context.putImageData(output, 0, 0);
-    setStatus(`${elements.source.value} through ${elements.display.value} / ${elements.view.value}`, 'ok');
+    renderCpu(params);
+    setStatus(renderStatus('CPU'), 'ok');
   } catch (error) {
     setStatus(error instanceof Error ? error.message : String(error), 'error');
   }
@@ -249,7 +560,7 @@ async function loadBuiltinConfigs() {
     option.textContent = uiName;
     return option;
   }));
-  select.value = ACES_CG_V4_CONFIG;
+  select.value = ACES_CG_V2_CONFIG;
 }
 
 async function writeDirectoryToFs(directoryHandle, basePath) {
@@ -280,7 +591,7 @@ async function main() {
 
   elements.version.textContent = `OCIO ${ocio.version}`;
   await loadBuiltinConfigs();
-  await loadBuiltinConfig(ACES_CG_V4_CONFIG);
+  await loadBuiltinConfig(ACES_CG_V2_CONFIG);
 }
 
 for (const element of [elements.source, elements.display]) {
@@ -369,7 +680,7 @@ elements.loadConfigFolder.addEventListener('click', async () => {
 });
 
 elements.resetConfig.addEventListener('click', () => {
-  loadBuiltinConfig(ACES_CG_V4_CONFIG).catch((error) => {
+  loadBuiltinConfig(ACES_CG_V2_CONFIG).catch((error) => {
     setStatus(`Failed to reset: ${error.message}`, 'error');
   });
 });
