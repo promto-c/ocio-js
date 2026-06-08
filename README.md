@@ -6,8 +6,8 @@ OpenColorIO 2.5 WebAssembly bindings for browser and Node.js. The native module 
 
 This checkout expects local OpenColorIO 2.5 and Emscripten checkouts. By default the build script uses:
 
-- `../ocio-js/ocio`
-- `../ocio-js/emsdk`
+- `ocio`
+- `emsdk`
 
 Override them if needed:
 

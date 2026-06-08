@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>OCIO WASM ACES Browser Demo</title>
+    <title>OCIO WASM Browser Demo</title>
     <link rel="stylesheet" href="./style.css">
   </head>
   <body>
@@ -19,45 +19,53 @@
           <span id="version">OpenColorIO</span>
         </div>
 
-        <label>
-          Input
-          <select id="source"></select>
-        </label>
+        <section class="section">
+          <h2 class="section-title">Config</h2>
+          <label>
+            Built-in
+            <select id="builtinConfig"></select>
+          </label>
+          <button id="loadOcioFile" type="button">Load OCIO Config</button>
+          <button id="loadConfigFolder" type="button">Load Config Folder</button>
+          <button id="resetConfig" type="button">Use Built-in ACES</button>
+          <div id="configInfo" class="config-info"></div>
+        </section>
 
-        <label>
-          Display
-          <select id="display"></select>
-        </label>
-
-        <label>
-          View
-          <select id="view"></select>
-        </label>
-
-        <label>
-          Exposure
-          <input id="exposure" type="range" min="-4" max="4" value="0" step="0.05">
-          <output id="exposureValue">0.00</output>
-        </label>
-
-        <label>
-          Gain
-          <input id="gain" type="range" min="0" max="4" value="1" step="0.01">
-          <output id="gainValue">1.00</output>
-        </label>
-
-        <label>
-          Gamma
-          <input id="gamma" type="range" min="0.25" max="3" value="1" step="0.01">
-          <output id="gammaValue">1.00</output>
-        </label>
-
-        <label class="file">
-          <span>Image</span>
-          <input id="imageFile" type="file" accept="image/*">
-        </label>
-
-        <button id="reset" type="button">Reset Sample</button>
+        <section class="section">
+          <h2 class="section-title">Tone Mapping</h2>
+          <label>
+            Input
+            <select id="source"></select>
+          </label>
+          <label>
+            Display
+            <select id="display"></select>
+          </label>
+          <label>
+            View
+            <select id="view"></select>
+          </label>
+          <label>
+            Exposure
+            <input id="exposure" type="range" min="-4" max="4" value="0" step="0.05">
+            <output id="exposureValue">0.00</output>
+          </label>
+          <label>
+            Gain
+            <input id="gain" type="range" min="0" max="4" value="1" step="0.01">
+            <output id="gainValue">1.00</output>
+          </label>
+          <label>
+            Gamma
+            <input id="gamma" type="range" min="0.25" max="3" value="1" step="0.01">
+            <output id="gammaValue">1.00</output>
+          </label>
+          <label class="file">
+            <span>Image</span>
+            <input id="imageFile" type="file" accept="image/*">
+          </label>
+          <button id="reset" type="button">Reset Sample</button>
+        </section>
       </aside>
     </main>
 
