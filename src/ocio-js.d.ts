@@ -1,3 +1,5 @@
+export const ACES_CG_V2_CONFIG: 'ocio://cg-config-v2.2.0_aces-v1.3_ocio-v2.4';
+export const ACES_STUDIO_V2_CONFIG: 'ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4';
 export const ACES_CG_V4_CONFIG: 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5';
 export const ACES_STUDIO_V4_CONFIG: 'ocio://studio-config-v4.0.0_aces-v2.0_ocio-v2.5';
 

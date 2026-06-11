@@ -1,4 +1,7 @@
 build/
 node_modules/
+emsdk/
+ocio/
+*.tgz
 *.log
 .DS_Store

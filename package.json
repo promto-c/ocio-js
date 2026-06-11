@@ -1,6 +1,6 @@
 {
-  "name": "ocio-js",
-  "version": "0.1.0",
+  "name": "@bb-studio/ocio",
+  "version": "0.0.1",
   "description": "Real OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.",
   "type": "module",
   "main": "./src/index.js",
@@ -8,12 +8,18 @@
   "exports": {
     ".": {
       "types": "./src/ocio-js.d.ts",
-      "import": "./src/index.js"
-    }
+      "import": "./src/index.js",
+      "default": "./src/index.js"
+    },
+    "./dist/ocio-wasm.js": "./dist/ocio-wasm.js",
+    "./dist/ocio-wasm.wasm": "./dist/ocio-wasm.wasm",
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build:wasm": "bash scripts/build-wasm.sh",
     "test": "node --test test/*.test.js",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepublishOnly": "npm test",
     "serve:demo": "node scripts/serve-demo.mjs"
   },
   "keywords": [
@@ -24,12 +30,25 @@
     "color-management"
   ],
   "license": "BSD-3-Clause",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/promto-c/ocio-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/promto-c/ocio-js/issues"
+  },
+  "homepage": "https://github.com/promto-c/ocio-js#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
-    "dist",
-    "examples",
-    "src",
-    "scripts",
-    "README.md"
+    "dist/ocio-wasm.js",
+    "dist/ocio-wasm.wasm",
+    "src/index.js",
+    "src/ocio-js.d.ts",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "engines": {
     "node": ">=20"
