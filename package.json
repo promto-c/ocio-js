@@ -1,18 +1,25 @@
 {
   "name": "@bb-studio/ocio",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Real OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.",
   "type": "module",
-  "main": "./src/index.js",
   "types": "./src/ocio-js.d.ts",
+  "imports": {
+    "#ocio-wasm": {
+      "node": "./dist/ocio-wasm.node.js",
+      "default": "./dist/ocio-wasm.js"
+    }
+  },
   "exports": {
     ".": {
       "types": "./src/ocio-js.d.ts",
-      "import": "./src/index.js",
       "default": "./src/index.js"
     },
-    "./dist/ocio-wasm.js": "./dist/ocio-wasm.js",
-    "./dist/ocio-wasm.wasm": "./dist/ocio-wasm.wasm",
+    "./wasm": {
+      "node": "./dist/ocio-wasm.node.js",
+      "default": "./dist/ocio-wasm.js"
+    },
+    "./wasm.wasm": "./dist/ocio-wasm.wasm",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -43,6 +50,7 @@
   },
   "files": [
     "dist/ocio-wasm.js",
+    "dist/ocio-wasm.node.js",
     "dist/ocio-wasm.wasm",
     "src/index.js",
     "src/ocio-js.d.ts",

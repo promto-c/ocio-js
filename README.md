@@ -12,10 +12,15 @@ The native module links against OpenColorIO C++ and runs the OCIO CPU processor 
 npm install @bb-studio/ocio
 ```
 
-The npm package includes the prebuilt Emscripten module:
+The npm package exposes the JavaScript API from `@bb-studio/ocio` and a direct wasm loader from `@bb-studio/ocio/wasm`.
+
+It ships three prebuilt Emscripten artifacts:
 
 - `dist/ocio-wasm.js`
+- `dist/ocio-wasm.node.js`
 - `dist/ocio-wasm.wasm`
+
+Node.js resolves `@bb-studio/ocio/wasm` to `dist/ocio-wasm.node.js`. Browsers, workers, and other runtimes resolve it to `dist/ocio-wasm.js`. Both wrappers load the same `dist/ocio-wasm.wasm` binary. The browser wrapper is built without Node.js runtime branches, so browser bundlers do not see Node.js built-in imports such as `node:module`.
 
 ## Usage
 
@@ -101,6 +106,7 @@ OCIO_SOURCE_DIR=/path/to/OpenColorIO EMSDK_DIR=/path/to/emsdk npm run build:wasm
 The build creates:
 
 - `dist/ocio-wasm.js`
+- `dist/ocio-wasm.node.js`
 - `dist/ocio-wasm.wasm`
 
 ## Publish
@@ -129,7 +135,7 @@ The test loads the wasm module in Node, creates the ACES v4 / ACES 2.0 built-in 
 npm run serve:demo
 ```
 
-Then open `http://localhost:4173/examples/browser/`.
+Then open the URL printed by the script, usually `http://localhost:4173/examples/browser/`.
 
 The demo renders a generated HDR sample image through the OCIO display/view processor. You can choose the input color space, display, view, exposure, gain, gamma, or load your own image.
 

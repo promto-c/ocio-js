@@ -10,13 +10,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(OCIO_WASM_DIST_DIR "${CMAKE_SOURCE_DIR}/dist" CACHE PATH "Output directory for ocio-wasm.js and ocio-wasm.wasm")
+set(OCIO_WASM_DIST_DIR "${CMAKE_SOURCE_DIR}/dist" CACHE PATH "Output directory for ocio wasm artifacts")
 
 find_package(OpenColorIO CONFIG REQUIRED)
-
-add_executable(ocio-wasm src/native/ocio_bridge.cpp)
-target_link_libraries(ocio-wasm PRIVATE OpenColorIO::OpenColorIO)
-target_compile_options(ocio-wasm PRIVATE -fexceptions)
 
 set(OCIO_WASM_EXPORTED_FUNCTIONS
     "['_malloc','_free',\
@@ -35,23 +31,30 @@ set(OCIO_WASM_EXPORTED_FUNCTIONS
 
 set(OCIO_WASM_RUNTIME_METHODS "['UTF8ToString','stringToUTF8','lengthBytesUTF8','FS','HEAPU8','HEAPF32']")
 
-target_link_options(ocio-wasm PRIVATE
-    -fexceptions
-    "SHELL:-s WASM=1"
-    "SHELL:-s MODULARIZE=1"
-    "SHELL:-s EXPORT_ES6=1"
-    "SHELL:-s EXPORT_NAME=createOcioWasmModule"
-    "SHELL:-s ENVIRONMENT=web,worker,node"
-    "SHELL:-s ALLOW_MEMORY_GROWTH=1"
-    "SHELL:-s INITIAL_MEMORY=67108864"
-    "SHELL:-s FILESYSTEM=1"
-    "SHELL:-s DISABLE_EXCEPTION_CATCHING=0"
-    "SHELL:-s EXPORTED_FUNCTIONS=${OCIO_WASM_EXPORTED_FUNCTIONS}"
-    "SHELL:-s EXPORTED_RUNTIME_METHODS=${OCIO_WASM_RUNTIME_METHODS}"
-)
+function(add_ocio_wasm_target target_name output_name environment)
+    add_executable(${target_name} src/native/ocio_bridge.cpp)
+    target_link_libraries(${target_name} PRIVATE OpenColorIO::OpenColorIO)
+    target_compile_options(${target_name} PRIVATE -fexceptions)
+    target_link_options(${target_name} PRIVATE
+        -fexceptions
+        "SHELL:-s WASM=1"
+        "SHELL:-s MODULARIZE=1"
+        "SHELL:-s EXPORT_ES6=1"
+        "SHELL:-s EXPORT_NAME=createOcioWasmModule"
+        "SHELL:-s ENVIRONMENT=${environment}"
+        "SHELL:-s ALLOW_MEMORY_GROWTH=1"
+        "SHELL:-s INITIAL_MEMORY=67108864"
+        "SHELL:-s FILESYSTEM=1"
+        "SHELL:-s DISABLE_EXCEPTION_CATCHING=0"
+        "SHELL:-s EXPORTED_FUNCTIONS=${OCIO_WASM_EXPORTED_FUNCTIONS}"
+        "SHELL:-s EXPORTED_RUNTIME_METHODS=${OCIO_WASM_RUNTIME_METHODS}"
+    )
+    set_target_properties(${target_name} PROPERTIES
+        OUTPUT_NAME "${output_name}"
+        SUFFIX ".js"
+        RUNTIME_OUTPUT_DIRECTORY "${OCIO_WASM_DIST_DIR}"
+    )
+endfunction()
 
-set_target_properties(ocio-wasm PROPERTIES
-    OUTPUT_NAME "ocio-wasm"
-    SUFFIX ".js"
-    RUNTIME_OUTPUT_DIRECTORY "${OCIO_WASM_DIST_DIR}"
-)
+add_ocio_wasm_target(ocio-wasm ocio-wasm "web,worker")
+add_ocio_wasm_target(ocio-wasm-node ocio-wasm.node "web,worker,node")

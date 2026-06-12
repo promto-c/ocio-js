@@ -17,7 +17,7 @@ export const OptimizationFlags = Object.freeze({
   DRAFT: -1
 });
 
-const DEFAULT_MODULE_PATH = '../dist/ocio-wasm.js';
+const DEFAULT_MODULE_PATH = '#ocio-wasm';
 const DEFAULT_GPU_SHADER_FUNCTION = 'OCIODisplay';
 const DEFAULT_GPU_RESOURCE_PREFIX = 'ocio';
 const GPU_UNIFORM_TYPES = Object.freeze([

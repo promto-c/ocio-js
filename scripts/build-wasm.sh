@@ -18,7 +18,7 @@ PARALLEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null 
 EMCMAKE="${EMSDK_DIR}/upstream/emscripten/emcmake"
 
 if [[ "${1:-}" == "--clean" ]]; then
-    rm -rf "${OCIO_BUILD_DIR}" "${OCIO_INSTALL_DIR}" "${WRAPPER_BUILD_DIR}" "${DIST_DIR}/ocio-wasm.js" "${DIST_DIR}/ocio-wasm.wasm"
+    rm -rf "${OCIO_BUILD_DIR}" "${OCIO_INSTALL_DIR}" "${WRAPPER_BUILD_DIR}" "${DIST_DIR}/ocio-wasm.js" "${DIST_DIR}/ocio-wasm.node.js" "${DIST_DIR}/ocio-wasm.wasm" "${DIST_DIR}/ocio-wasm.node.wasm"
 fi
 
 if [[ ! -x "${EMCMAKE}" ]]; then
@@ -88,7 +88,22 @@ fi
     -DZLIB_USE_STATIC_LIBS=ON \
     -DOCIO_WASM_DIST_DIR="${DIST_DIR}"
 
-cmake --build "${WRAPPER_BUILD_DIR}" --target ocio-wasm --parallel "${PARALLEL}"
+cmake --build "${WRAPPER_BUILD_DIR}" --target ocio-wasm --target ocio-wasm-node --parallel "${PARALLEL}"
+
+NODE_WRAPPER="${DIST_DIR}/ocio-wasm.node.js"
+NODE_WASM="${DIST_DIR}/ocio-wasm.node.wasm"
+SHARED_WASM="${DIST_DIR}/ocio-wasm.wasm"
+
+if [[ -f "${NODE_WASM}" ]]; then
+    if ! cmp -s "${SHARED_WASM}" "${NODE_WASM}"; then
+        printf 'Generated wasm binaries differ: %s and %s\n' "${SHARED_WASM}" "${NODE_WASM}" >&2
+        exit 1
+    fi
+
+    node -e "const fs = require('node:fs'); const file = process.argv[1]; const source = fs.readFileSync(file, 'utf8'); fs.writeFileSync(file, source.replaceAll('ocio-wasm.node.wasm', 'ocio-wasm.wasm'));" "${NODE_WRAPPER}"
+    rm -f "${NODE_WASM}"
+fi
 
 printf 'Built %s\n' "${DIST_DIR}/ocio-wasm.js"
+printf 'Built %s\n' "${DIST_DIR}/ocio-wasm.node.js"
 printf 'Built %s\n' "${DIST_DIR}/ocio-wasm.wasm"

@@ -1,28 +1,22 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ACES_CG_V4_CONFIG, createOCIO } from '../src/index.js';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const wasmJsPath = join(root, 'dist', 'ocio-wasm.js');
+const wasmJsPath = join(root, 'dist', 'ocio-wasm.node.js');
 const wasmPath = join(root, 'dist', 'ocio-wasm.wasm');
 
 test('OpenColorIO 2.5 wasm loads the ACES v4 built-in CG config', async (t) => {
   if (!existsSync(wasmJsPath) || !existsSync(wasmPath)) {
-    t.skip('dist/ocio-wasm.js and dist/ocio-wasm.wasm are missing. Run npm run build:wasm first.');
+    t.skip('dist/ocio-wasm.node.js and dist/ocio-wasm.wasm are missing. Run npm run build:wasm first.');
     return;
   }
 
-  const ocio = await createOCIO({
-    modulePath: pathToFileURL(wasmJsPath).href,
-    locateFile(path) {
-      return path.endsWith('.wasm') ? pathToFileURL(wasmPath).href : path;
-    }
-  });
+  const ocio = await createOCIO();
 
   assert.match(ocio.version, /^2\.5\./);
 
