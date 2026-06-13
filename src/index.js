@@ -1,3 +1,5 @@
+import OcioWasmModule from '#ocio-wasm';
+
 export const ACES_CG_V2_CONFIG = 'ocio://cg-config-v2.2.0_aces-v1.3_ocio-v2.4';
 export const ACES_STUDIO_V2_CONFIG = 'ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4';
 export const ACES_CG_V4_CONFIG = 'ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5';
@@ -17,7 +19,7 @@ export const OptimizationFlags = Object.freeze({
   DRAFT: -1
 });
 
-const DEFAULT_MODULE_PATH = '#ocio-wasm';
+const DEFAULT_WASM_URL = new URL('../dist/ocio-wasm.wasm', import.meta.url).href;
 const DEFAULT_GPU_SHADER_FUNCTION = 'OCIODisplay';
 const DEFAULT_GPU_RESOURCE_PREFIX = 'ocio';
 const GPU_UNIFORM_TYPES = Object.freeze([
@@ -82,7 +84,7 @@ function toPositiveInteger(value, name) {
 }
 
 export async function createOCIO(options = {}) {
-  const moduleFactory = options.moduleFactory ?? (await import(options.modulePath ?? DEFAULT_MODULE_PATH)).default;
+  const moduleFactory = options.moduleFactory ?? OcioWasmModule;
   const userLocateFile = options.locateFile;
   const moduleOptions = {
     ...options.moduleOptions,
@@ -90,8 +92,8 @@ export async function createOCIO(options = {}) {
       if (userLocateFile) {
         return userLocateFile(path, prefix);
       }
-      if (path.endsWith('.wasm')) {
-        return new URL(`../dist/${path}`, import.meta.url).href;
+      if (path === 'ocio-wasm.wasm') {
+        return DEFAULT_WASM_URL;
       }
       return prefix + path;
     }

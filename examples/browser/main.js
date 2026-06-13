@@ -582,12 +582,7 @@ async function writeDirectoryToFs(directoryHandle, basePath) {
 }
 
 async function main() {
-  ocio = await createOCIO({
-    modulePath: new URL('../../dist/ocio-wasm.js', import.meta.url).href,
-    locateFile(path) {
-      return path.endsWith('.wasm') ? new URL('../../dist/ocio-wasm.wasm', import.meta.url).href : path;
-    }
-  });
+  ocio = await createOCIO();
 
   elements.version.textContent = `OCIO ${ocio.version}`;
   await loadBuiltinConfigs();

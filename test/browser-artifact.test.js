@@ -9,6 +9,10 @@ const packageJsonPath = join(root, 'package.json');
 const browserJsPath = join(root, 'dist', 'ocio-wasm.js');
 const browserWasmPath = join(root, 'dist', 'ocio-wasm.wasm');
 const nodeJsPath = join(root, 'dist', 'ocio-wasm.node.js');
+const srcIndexPath = join(root, 'src', 'index.js');
+const typesPath = join(root, 'src', 'ocio-js.d.ts');
+const demoHtmlPath = join(root, 'examples', 'browser', 'index.html');
+const demoMainPath = join(root, 'examples', 'browser', 'main.js');
 
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
 
@@ -96,4 +100,26 @@ test('Node loader uses the shared WASM binary', async () => {
 
   const moduleNamespace = await import('../dist/ocio-wasm.node.js');
   assert.equal(typeof moduleNamespace.default, 'function');
+});
+
+test('default createOCIO path is bundler-friendly', () => {
+  const source = readFileSync(srcIndexPath, 'utf8');
+  const types = readFileSync(typesPath, 'utf8');
+
+  assert.match(source, /import OcioWasmModule from '#ocio-wasm'/);
+  assert.match(source, /new URL\('\.\.\/dist\/ocio-wasm\.wasm', import\.meta\.url\)/);
+  assert.doesNotMatch(source, /import\('#ocio-wasm'\)/);
+  assert.doesNotMatch(source, /modulePath/);
+  assert.doesNotMatch(types, /modulePath/);
+});
+
+test('browser demo uses the default createOCIO path', () => {
+  const html = readFileSync(demoHtmlPath, 'utf8');
+  const source = readFileSync(demoMainPath, 'utf8');
+
+  assert.match(html, /"imports"\s*:\s*\{/);
+  assert.match(html, /"#ocio-wasm"\s*:\s*"\.\.\/\.\.\/dist\/ocio-wasm\.js"/);
+  assert.match(source, /await createOCIO\(\)/);
+  assert.doesNotMatch(source, /modulePath/);
+  assert.doesNotMatch(source, /locateFile/);
 });

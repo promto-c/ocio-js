@@ -12,7 +12,7 @@ The native module links against OpenColorIO C++ and runs the OCIO CPU processor 
 npm install @bb-studio/ocio
 ```
 
-The npm package exposes the JavaScript API from `@bb-studio/ocio` and a direct wasm loader from `@bb-studio/ocio/wasm`.
+The npm package exposes the JavaScript API from `@bb-studio/ocio`. `createOCIO()` selects the correct WebAssembly loader for the current runtime and resolves the bundled wasm file automatically.
 
 It ships three prebuilt Emscripten artifacts:
 
@@ -20,7 +20,7 @@ It ships three prebuilt Emscripten artifacts:
 - `dist/ocio-wasm.node.js`
 - `dist/ocio-wasm.wasm`
 
-Node.js resolves `@bb-studio/ocio/wasm` to `dist/ocio-wasm.node.js`. Browsers, workers, and other runtimes resolve it to `dist/ocio-wasm.js`. Both wrappers load the same `dist/ocio-wasm.wasm` binary. The browser wrapper is built without Node.js runtime branches, so browser bundlers do not see Node.js built-in imports such as `node:module`.
+Node.js uses `dist/ocio-wasm.node.js`. Browsers, workers, and other runtimes use `dist/ocio-wasm.js`. Both wrappers load the same `dist/ocio-wasm.wasm` binary. The browser wrapper is built without Node.js runtime branches, so browser bundlers do not see Node.js built-in imports such as `node:module`.
 
 ## Usage
 

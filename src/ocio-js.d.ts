@@ -19,7 +19,6 @@ export const OptimizationFlags: Readonly<{
 
 export interface CreateOCIOOptions {
   moduleFactory?: (options?: unknown) => Promise<unknown>;
-  modulePath?: string;
   moduleOptions?: Record<string, unknown>;
   locateFile?: (path: string, prefix: string) => string;
 }
