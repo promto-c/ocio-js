@@ -9,6 +9,10 @@ This package includes WebAssembly builds of OpenColorIO.
 - Website: https://opencolorio.org/
 - Source: https://github.com/AcademySoftwareFoundation/OpenColorIO
 
+The bundled WebAssembly build applies a local WebGL GLSL ES compatibility
+patch to OpenColorIO's fixed-function GPU shader generation. See
+`patches/opencolorio/0001-webgl-glsl-es-float-literals.patch`.
+
 Copyright Contributors to the OpenColorIO Project.
 
 Redistribution and use in source and binary forms, with or without

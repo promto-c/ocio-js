@@ -1,7 +1,7 @@
 {
   "name": "@bb-studio/ocio",
-  "version": "0.0.3",
-  "description": "Real OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.",
+  "version": "0.0.4",
+  "description": "OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.",
   "type": "module",
   "types": "./src/ocio-js.d.ts",
   "imports": {
@@ -13,13 +13,9 @@
   "exports": {
     ".": {
       "types": "./src/ocio-js.d.ts",
+      "vite": "./src/index.vite.js",
       "default": "./src/index.js"
     },
-    "./wasm": {
-      "node": "./dist/ocio-wasm.node.js",
-      "default": "./dist/ocio-wasm.js"
-    },
-    "./wasm.wasm": "./dist/ocio-wasm.wasm",
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -53,10 +49,15 @@
     "dist/ocio-wasm.node.js",
     "dist/ocio-wasm.wasm",
     "src/index.js",
+    "src/index.vite.js",
+    "src/wasm-url.js",
+    "src/wasm-url.vite.js",
     "src/ocio-js.d.ts",
     "README.md",
     "LICENSE",
-    "THIRD_PARTY_NOTICES.md"
+    "THIRD_PARTY_NOTICES.md",
+    "patches/opencolorio/0001-webgl-glsl-es-float-literals.patch",
+    "patches/opencolorio/README.md"
   ],
   "engines": {
     "node": ">=20"

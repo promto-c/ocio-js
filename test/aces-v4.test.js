@@ -4,7 +4,7 @@ import test from 'node:test';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ACES_CG_V4_CONFIG, createOCIO } from '../src/index.js';
+import { ACES_CG_V4_CONFIG, createOCIO } from '@bb-studio/ocio';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const wasmJsPath = join(root, 'dist', 'ocio-wasm.node.js');

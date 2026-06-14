@@ -1,4 +1,4 @@
-import { ACES_CG_V2_CONFIG, createOCIO } from '../../src/index.js';
+import { ACES_CG_V2_CONFIG, createOCIO } from '@bb-studio/ocio';
 
 const width = 960;
 const height = 540;

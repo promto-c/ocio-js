@@ -14,13 +14,42 @@ npm install @bb-studio/ocio
 
 The npm package exposes the JavaScript API from `@bb-studio/ocio`. `createOCIO()` selects the correct WebAssembly loader for the current runtime and resolves the bundled wasm file automatically.
 
-It ships three prebuilt Emscripten artifacts:
+The package ships three internal Emscripten artifacts:
 
 - `dist/ocio-wasm.js`
 - `dist/ocio-wasm.node.js`
 - `dist/ocio-wasm.wasm`
 
 Node.js uses `dist/ocio-wasm.node.js`. Browsers, workers, and other runtimes use `dist/ocio-wasm.js`. Both wrappers load the same `dist/ocio-wasm.wasm` binary. The browser wrapper is built without Node.js runtime branches, so browser bundlers do not see Node.js built-in imports such as `node:module`.
+
+## WASM URL Resolution
+
+By default, `createOCIO()` resolves the bundled wasm file with the standard `new URL('../dist/ocio-wasm.wasm', import.meta.url)` pattern.
+
+Vite apps can keep the same import and opt into the built-in Vite asset URL adapter with a resolver condition:
+
+```js
+// vite.config.js
+export default {
+  resolve: {
+    conditions: ['vite', 'module', 'browser', 'development|production']
+  }
+};
+```
+
+Then `createOCIO()` automatically uses the Vite-compatible wasm URL in dev and production builds.
+
+If your app serves static assets from a CDN or public assets directory, pass the wasm URL directly:
+
+```js
+import { createOCIO } from '@bb-studio/ocio';
+
+const ocio = await createOCIO({
+  wasmUrl: '/assets/ocio-wasm.wasm'
+});
+```
+
+Advanced Emscripten users can pass `locateFile` for full control over every auxiliary file lookup.
 
 ## Usage
 

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_OCIO_SOURCE_DIR="${ROOT_DIR}/../ocio-js/ocio"
-DEFAULT_EMSDK_DIR="${ROOT_DIR}/../ocio-js/emsdk"
+DEFAULT_OCIO_SOURCE_DIR="${ROOT_DIR}/ocio"
+DEFAULT_EMSDK_DIR="${ROOT_DIR}/emsdk"
 
 OCIO_SOURCE_DIR="${OCIO_SOURCE_DIR:-${DEFAULT_OCIO_SOURCE_DIR}}"
 EMSDK_DIR="${EMSDK_DIR:-${DEFAULT_EMSDK_DIR}}"
@@ -16,6 +16,9 @@ DIST_DIR="${DIST_DIR:-${ROOT_DIR}/dist}"
 OCIO_EXT_DIST_DIR="${OCIO_EXT_DIST_DIR:-${OCIO_BUILD_DIR}/ext/dist}"
 PARALLEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || printf '4')}"
 EMCMAKE="${EMSDK_DIR}/upstream/emscripten/emcmake"
+OCIO_PATCHES=(
+    "${ROOT_DIR}/patches/opencolorio/0001-webgl-glsl-es-float-literals.patch"
+)
 
 if [[ "${1:-}" == "--clean" ]]; then
     rm -rf "${OCIO_BUILD_DIR}" "${OCIO_INSTALL_DIR}" "${WRAPPER_BUILD_DIR}" "${DIST_DIR}/ocio-wasm.js" "${DIST_DIR}/ocio-wasm.node.js" "${DIST_DIR}/ocio-wasm.wasm" "${DIST_DIR}/ocio-wasm.node.wasm"
@@ -33,9 +36,49 @@ if [[ ! -f "${OCIO_SOURCE_DIR}/CMakeLists.txt" ]]; then
     exit 1
 fi
 
+apply_ocio_patch() {
+    local patch_file="$1"
+    local patch_name
+    patch_name="$(basename "${patch_file}")"
+
+    if [[ ! -f "${patch_file}" ]]; then
+        printf 'OpenColorIO patch was not found: %s\n' "${patch_file}" >&2
+        exit 1
+    fi
+
+    if git -C "${OCIO_SOURCE_DIR}" apply --check "${patch_file}" >/dev/null 2>&1; then
+        printf 'Applying OpenColorIO patch: %s\n' "${patch_name}"
+        git -C "${OCIO_SOURCE_DIR}" apply "${patch_file}"
+        return 0
+    fi
+
+    if git -C "${OCIO_SOURCE_DIR}" apply --reverse --check "${patch_file}" >/dev/null 2>&1; then
+        printf 'OpenColorIO patch already applied: %s\n' "${patch_name}"
+        return 0
+    fi
+
+    printf 'OpenColorIO patch could not be applied cleanly: %s\n' "${patch_file}" >&2
+    printf 'Check OCIO_SOURCE_DIR or refresh patches/opencolorio.\n' >&2
+    exit 1
+}
+
+for patch_file in "${OCIO_PATCHES[@]}"; do
+    apply_ocio_patch "${patch_file}"
+done
+
+OCIO_PATCH_SIGNATURE="$(for patch_file in "${OCIO_PATCHES[@]}"; do cksum "${patch_file}"; done)"
+OCIO_PATCH_STAMP="${OCIO_INSTALL_DIR}/.ocio-js-opencolorio-patches"
+
 mkdir -p "${BUILD_DIR}" "${DIST_DIR}"
 mkdir -p "${EM_CACHE}"
 export EM_CACHE
+
+if [[ -f "${OCIO_INSTALL_DIR}/lib/cmake/OpenColorIO/OpenColorIOConfig.cmake" ]]; then
+    if [[ ! -f "${OCIO_PATCH_STAMP}" ]] || [[ "$(cat "${OCIO_PATCH_STAMP}")" != "${OCIO_PATCH_SIGNATURE}" ]]; then
+        printf 'OpenColorIO patch set changed; rebuilding OpenColorIO.\n'
+        rm -rf "${OCIO_BUILD_DIR}" "${OCIO_INSTALL_DIR}"
+    fi
+fi
 
 if [[ ! -f "${OCIO_INSTALL_DIR}/lib/cmake/OpenColorIO/OpenColorIOConfig.cmake" ]]; then
     "${EMCMAKE}" cmake \
@@ -67,6 +110,7 @@ if [[ ! -f "${OCIO_INSTALL_DIR}/lib/cmake/OpenColorIO/OpenColorIOConfig.cmake" ]
         -DOCIO_WARNING_AS_ERROR=OFF
 
     cmake --build "${OCIO_BUILD_DIR}" --target install --parallel "${PARALLEL}"
+    printf '%s\n' "${OCIO_PATCH_SIGNATURE}" > "${OCIO_PATCH_STAMP}"
 fi
 
 "${EMCMAKE}" cmake \

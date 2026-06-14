@@ -20,6 +20,7 @@ export const OptimizationFlags: Readonly<{
 export interface CreateOCIOOptions {
   moduleFactory?: (options?: unknown) => Promise<unknown>;
   moduleOptions?: Record<string, unknown>;
+  wasmUrl?: string;
   locateFile?: (path: string, prefix: string) => string;
 }
 
