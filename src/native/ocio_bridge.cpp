@@ -19,9 +19,11 @@ namespace
 std::string g_lastError;
 std::string g_stringResult;
 int g_nextConfigHandle = 1;
+int g_nextContextHandle = 1;
 int g_nextProcessorHandle = 1;
 
 std::unordered_map<int, OCIO::ConstConfigRcPtr> g_configs;
+std::unordered_map<int, OCIO::ContextRcPtr> g_contexts;
 
 struct ProcessorRecord
 {
@@ -69,6 +71,30 @@ OCIO::ConstConfigRcPtr requireConfig(int handle)
     {
         std::ostringstream stream;
         stream << "Invalid OCIO config handle: " << handle;
+        throw std::runtime_error(stream.str());
+    }
+    return it->second;
+}
+
+OCIO::ConstContextRcPtr requireContext(int handle)
+{
+    const auto it = g_contexts.find(handle);
+    if (it == g_contexts.end())
+    {
+        std::ostringstream stream;
+        stream << "Invalid OCIO context handle: " << handle;
+        throw std::runtime_error(stream.str());
+    }
+    return it->second;
+}
+
+OCIO::ContextRcPtr requireEditableContext(int handle)
+{
+    const auto it = g_contexts.find(handle);
+    if (it == g_contexts.end())
+    {
+        std::ostringstream stream;
+        stream << "Invalid OCIO context handle: " << handle;
         throw std::runtime_error(stream.str());
     }
     return it->second;
@@ -757,16 +783,47 @@ const char * ocio_config_get_named_transform_name(int handle, int index)
     OCIO_BRIDGE_CATCH(nullptr)
 }
 
-int ocio_processor_create_color_space(int configHandle, const char * source, const char * destination, int optimizationFlags)
+int ocio_context_create(int configHandle)
 {
     OCIO_BRIDGE_TRY
-    OCIO::ConstProcessorRcPtr processor = requireConfig(configHandle)->getProcessor(source, destination);
+    const int handle = g_nextContextHandle++;
+    g_contexts.emplace(handle, requireConfig(configHandle)->getCurrentContext()->createEditableCopy());
+    return handle;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_context_set_string_var(int contextHandle, const char * name, const char * value)
+{
+    OCIO_BRIDGE_TRY
+    requireEditableContext(contextHandle)->setStringVar(name, value);
+    return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+void ocio_context_release(int handle)
+{
+    g_contexts.erase(handle);
+}
+
+int ocio_processor_create_color_space(
+    int configHandle,
+    int contextHandle,
+    const char * source,
+    const char * destination,
+    int optimizationFlags)
+{
+    OCIO_BRIDGE_TRY
+    const auto config = requireConfig(configHandle);
+    OCIO::ConstProcessorRcPtr processor = contextHandle
+        ? config->getProcessor(requireContext(contextHandle), source, destination)
+        : config->getProcessor(source, destination);
     return storeProcessor(processor, optimizationFlags);
     OCIO_BRIDGE_CATCH(0)
 }
 
 int ocio_processor_create_display_view(
     int configHandle,
+    int contextHandle,
     const char * source,
     const char * display,
     const char * view,
@@ -774,11 +831,15 @@ int ocio_processor_create_display_view(
     int optimizationFlags)
 {
     OCIO_BRIDGE_TRY
-    OCIO::ConstProcessorRcPtr processor = requireConfig(configHandle)->getProcessor(
-        source,
-        display,
-        view,
-        parseDirection(direction));
+    const auto config = requireConfig(configHandle);
+    OCIO::ConstProcessorRcPtr processor = contextHandle
+        ? config->getProcessor(
+            requireContext(contextHandle),
+            source,
+            display,
+            view,
+            parseDirection(direction))
+        : config->getProcessor(source, display, view, parseDirection(direction));
     return storeProcessor(processor, optimizationFlags);
     OCIO_BRIDGE_CATCH(0)
 }

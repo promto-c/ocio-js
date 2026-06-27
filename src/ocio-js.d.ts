@@ -79,6 +79,7 @@ export interface DisplayViewProcessorOptions {
   view: string;
   direction?: 0 | 1 | 'forward' | 'inverse';
   optimization?: number | 'default' | 'none' | 'lossless' | 'very-good' | 'good' | 'draft';
+  context?: Readonly<Record<string, string>>;
 }
 
 export type GpuShaderLanguage =
@@ -166,7 +167,10 @@ export class Config {
   listLooks(): string[];
   listViewTransforms(): string[];
   listNamedTransforms(): string[];
-  createColorSpaceProcessor(source: string, destination: string, options?: { optimization?: DisplayViewProcessorOptions['optimization'] }): Processor;
+  createColorSpaceProcessor(source: string, destination: string, options?: {
+    optimization?: DisplayViewProcessorOptions['optimization'];
+    context?: Readonly<Record<string, string>>;
+  }): Processor;
   createDisplayViewProcessor(options: DisplayViewProcessorOptions): Processor;
 }
 

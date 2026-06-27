@@ -114,7 +114,9 @@ const configText = await readFile('./show/config.ocio', 'utf8');
 ocio.writeFile(`${workingDir}/luts/look.cube`, await readFile('./show/luts/look.cube'));
 
 const config = ocio.createConfigFromString(configText, { workingDir });
-const processor = config.createColorSpaceProcessor('Input - Camera', 'Output - Rec.709');
+const processor = config.createColorSpaceProcessor('Input - Camera', 'Output - Rec.709', {
+  context: { SHOT: '010', LUT: 'luts/shot010.cube' },
+});
 
 const rgb = new Float32Array([0.18, 0.18, 0.18]);
 processor.applyRGBF32(rgb);

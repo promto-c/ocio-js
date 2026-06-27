@@ -434,28 +434,72 @@ export class Config {
 
   createColorSpaceProcessor(source, destination, options = {}) {
     const optimization = toOptimizationFlags(options.optimization);
-    const handle = this.ocio._withCStrings([source, destination], ([sourcePtr, destinationPtr]) => (
-      this.ocio.module._ocio_processor_create_color_space(this.handle, sourcePtr, destinationPtr, optimization)
+    const handle = this._withContext(options.context, (contextHandle) => (
+      this.ocio._withCStrings([source, destination], ([sourcePtr, destinationPtr]) => (
+        this.ocio.module._ocio_processor_create_color_space(
+          this.handle,
+          contextHandle,
+          sourcePtr,
+          destinationPtr,
+          optimization
+        )
+      ))
     ));
     this.ocio._assertHandle(handle, `Could not create OCIO ColorSpace processor ${source} -> ${destination}`);
     return new Processor(this.ocio, handle);
   }
 
-  createDisplayViewProcessor({ source, display, view, direction = TransformDirection.FORWARD, optimization } = {}) {
+  createDisplayViewProcessor({
+    source,
+    display,
+    view,
+    direction = TransformDirection.FORWARD,
+    optimization,
+    context
+  } = {}) {
     const optimizationFlags = toOptimizationFlags(optimization);
     const transformDirection = toDirection(direction);
-    const handle = this.ocio._withCStrings([source, display, view], ([sourcePtr, displayPtr, viewPtr]) => (
-      this.ocio.module._ocio_processor_create_display_view(
-        this.handle,
-        sourcePtr,
-        displayPtr,
-        viewPtr,
-        transformDirection,
-        optimizationFlags
-      )
+    const handle = this._withContext(context, (contextHandle) => (
+      this.ocio._withCStrings([source, display, view], ([sourcePtr, displayPtr, viewPtr]) => (
+        this.ocio.module._ocio_processor_create_display_view(
+          this.handle,
+          contextHandle,
+          sourcePtr,
+          displayPtr,
+          viewPtr,
+          transformDirection,
+          optimizationFlags
+        )
+      ))
     ));
     this.ocio._assertHandle(handle, `Could not create OCIO Display/View processor ${source} -> ${display}/${view}`);
     return new Processor(this.ocio, handle);
+  }
+
+  _withContext(context, callback) {
+    const entries = Object.entries(context ?? {}).sort(([left], [right]) => left.localeCompare(right));
+    if (entries.length === 0) {
+      return callback(0);
+    }
+
+    const contextHandle = this.ocio.module._ocio_context_create(this.handle);
+    this.ocio._assertHandle(contextHandle, 'Could not create OCIO context');
+    try {
+      for (const [name, value] of entries) {
+        if (!name.trim() || typeof value !== 'string') {
+          throw new TypeError('OCIO context variables require non-empty names and string values');
+        }
+        this.ocio._withCStrings([name, value], ([namePtr, valuePtr]) => {
+          this.ocio._assertStatus(
+            this.ocio.module._ocio_context_set_string_var(contextHandle, namePtr, valuePtr),
+            `Could not set OCIO context variable ${name}`
+          );
+        });
+      }
+      return callback(contextHandle);
+    } finally {
+      this.ocio.module._ocio_context_release(contextHandle);
+    }
   }
 }
 

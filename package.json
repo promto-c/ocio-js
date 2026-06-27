@@ -1,6 +1,6 @@
 {
   "name": "@bb-studio/ocio",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.",
   "type": "module",
   "types": "./src/ocio-js.d.ts",
