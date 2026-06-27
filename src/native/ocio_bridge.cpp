@@ -543,6 +543,101 @@ const char * ocio_config_get_color_space_category(int handle, const char * name,
     OCIO_BRIDGE_CATCH(nullptr)
 }
 
+int ocio_config_get_num_file_rules(int handle)
+{
+    OCIO_BRIDGE_TRY
+    return static_cast<int>(requireConfig(handle)->getFileRules()->getNumEntries());
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_config_get_file_rule_name(int handle, int ruleIndex)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getFileRules()->getName(static_cast<size_t>(ruleIndex)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_file_rule_color_space(int handle, int ruleIndex)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getFileRules()->getColorSpace(static_cast<size_t>(ruleIndex)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_file_rule_pattern(int handle, int ruleIndex)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getFileRules()->getPattern(static_cast<size_t>(ruleIndex)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_file_rule_extension(int handle, int ruleIndex)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getFileRules()->getExtension(static_cast<size_t>(ruleIndex)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_file_rule_regex(int handle, int ruleIndex)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getFileRules()->getRegex(static_cast<size_t>(ruleIndex)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_config_get_file_rule_custom_key_count(int handle, int ruleIndex)
+{
+    OCIO_BRIDGE_TRY
+    return static_cast<int>(
+        requireConfig(handle)->getFileRules()->getNumCustomKeys(static_cast<size_t>(ruleIndex)));
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_config_get_file_rule_custom_key_name(int handle, int ruleIndex, int keyIndex)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getFileRules()->getCustomKeyName(
+        static_cast<size_t>(ruleIndex),
+        static_cast<size_t>(keyIndex)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_file_rule_custom_key_value(int handle, int ruleIndex, int keyIndex)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getFileRules()->getCustomKeyValue(
+        static_cast<size_t>(ruleIndex),
+        static_cast<size_t>(keyIndex)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_color_space_from_filepath(int handle, const char * filePath)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireConfig(handle)->getColorSpaceFromFilepath(filePath));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_config_get_file_rule_index_from_filepath(int handle, const char * filePath)
+{
+    OCIO_BRIDGE_TRY
+    size_t ruleIndex = 0;
+    requireConfig(handle)->getColorSpaceFromFilepath(filePath, ruleIndex);
+    if (ruleIndex > static_cast<size_t>(std::numeric_limits<int>::max()))
+    {
+        throw std::runtime_error("OCIO file rule index exceeds the supported range");
+    }
+    return static_cast<int>(ruleIndex);
+    OCIO_BRIDGE_CATCH(-1)
+}
+
+int ocio_config_filepath_only_matches_default_rule(int handle, const char * filePath)
+{
+    OCIO_BRIDGE_TRY
+    return requireConfig(handle)->filepathOnlyMatchesDefaultRule(filePath) ? 1 : 0;
+    OCIO_BRIDGE_CATCH(0)
+}
+
 int ocio_config_get_num_displays(int handle)
 {
     OCIO_BRIDGE_TRY

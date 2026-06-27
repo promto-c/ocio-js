@@ -55,6 +55,24 @@ export interface ViewInfo {
   description: string;
 }
 
+export interface FileRuleInfo {
+  index: number;
+  name: string;
+  colorSpace: string;
+  pattern: string;
+  extension: string;
+  regex: string;
+  custom: Record<string, string>;
+}
+
+export interface FileRuleMatch {
+  colorSpace: string;
+  ruleIndex: number;
+  ruleName: string;
+  isDefaultRule: boolean;
+  custom: Record<string, string>;
+}
+
 export interface DisplayViewProcessorOptions {
   source: string;
   display: string;
@@ -137,6 +155,9 @@ export class Config {
   listRoles(): RoleInfo[];
   listColorSpaces(): ColorSpaceInfo[];
   getColorSpace(name: string): ColorSpaceInfo;
+  getFileRule(index: number): FileRuleInfo;
+  listFileRules(): FileRuleInfo[];
+  matchFileRule(filePath: string): FileRuleMatch | null;
   listDisplays(): string[];
   getDefaultDisplay(): string;
   listViews(display: string): ViewInfo[];

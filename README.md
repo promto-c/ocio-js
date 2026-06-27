@@ -73,6 +73,19 @@ processor.dispose();
 config.dispose();
 ```
 
+## File Rules
+
+Resolve media paths through the active config instead of reproducing OCIO matching rules:
+
+```js
+const match = config.matchFileRule('/show/plates/shot010.exr');
+if (match) {
+  console.log(match.colorSpace, match.ruleName, match.custom);
+}
+
+const rules = config.listFileRules();
+```
+
 ## Custom OCIO Configs
 
 For a custom config that does not reference external files, load the config text and create it directly:

@@ -300,6 +300,79 @@ export class Config {
     });
   }
 
+  getFileRule(index) {
+    const ruleIndex = Number(index);
+    if (!Number.isInteger(ruleIndex) || ruleIndex < 0) {
+      throw new RangeError('OCIO file rule index must be a non-negative integer');
+    }
+
+    const customKeyCount = this.ocio.module._ocio_config_get_file_rule_custom_key_count(
+      this.handle,
+      ruleIndex
+    );
+    const custom = {};
+    for (let keyIndex = 0; keyIndex < customKeyCount; keyIndex += 1) {
+      const name = this.ocio._string(
+        'ocio_config_get_file_rule_custom_key_name',
+        this.handle,
+        ruleIndex,
+        keyIndex
+      );
+      custom[name] = this.ocio._string(
+        'ocio_config_get_file_rule_custom_key_value',
+        this.handle,
+        ruleIndex,
+        keyIndex
+      );
+    }
+
+    return {
+      index: ruleIndex,
+      name: this.ocio._string('ocio_config_get_file_rule_name', this.handle, ruleIndex),
+      colorSpace: this.ocio._string('ocio_config_get_file_rule_color_space', this.handle, ruleIndex),
+      pattern: this.ocio._string('ocio_config_get_file_rule_pattern', this.handle, ruleIndex),
+      extension: this.ocio._string('ocio_config_get_file_rule_extension', this.handle, ruleIndex),
+      regex: this.ocio._string('ocio_config_get_file_rule_regex', this.handle, ruleIndex),
+      custom
+    };
+  }
+
+  listFileRules() {
+    const count = this.ocio.module._ocio_config_get_num_file_rules(this.handle);
+    return Array.from({ length: count }, (_, index) => this.getFileRule(index));
+  }
+
+  matchFileRule(filePath) {
+    return this.ocio._withCString(filePath, (filePathPtr) => {
+      const colorSpace = this.ocio._string(
+        'ocio_config_get_color_space_from_filepath',
+        this.handle,
+        filePathPtr
+      );
+      if (!colorSpace) {
+        return null;
+      }
+
+      const ruleIndex = this.ocio.module._ocio_config_get_file_rule_index_from_filepath(
+        this.handle,
+        filePathPtr
+      );
+      const rule = this.getFileRule(ruleIndex);
+      const isDefaultRule =
+        this.ocio.module._ocio_config_filepath_only_matches_default_rule(
+          this.handle,
+          filePathPtr
+        ) === 1;
+      return {
+        colorSpace,
+        ruleIndex,
+        ruleName: rule.name,
+        isDefaultRule,
+        custom: rule.custom
+      };
+    });
+  }
+
   listDisplays() {
     const count = this.ocio.module._ocio_config_get_num_displays(this.handle);
     return Array.from({ length: count }, (_, index) => this.ocio._string('ocio_config_get_display', this.handle, index));
