@@ -134,6 +134,70 @@ ocio.writeFile(`${workingDir}/config.ocio`, configText);
 const config = ocio.createConfigFromFile(`${workingDir}/config.ocio`);
 ```
 
+## Transform Processors
+
+In addition to color-space and display/view processors, configs may create processors for files,
+looks, named transforms, or an ordered group of transforms. All processor types support the same
+CPU methods and GPU shader extraction.
+
+```js
+ocio.writeFile('/project/luts/show-look.cube', lutBytes);
+
+const fileProcessor = config.createFileTransformProcessor({
+  src: '/project/luts/show-look.cube',
+  interpolation: 'best',
+  direction: 'forward',
+  optimization: 'lossless'
+});
+
+const lookProcessor = config.createLookTransformProcessor({
+  source: 'ACEScg',
+  destination: 'ACEScg',
+  looks: 'Show Look'
+});
+
+const namedProcessor = config.createNamedTransformProcessor('Utility Curve', {
+  direction: 'inverse'
+});
+```
+
+Use a group when several operations should be optimized and extracted as one processor:
+
+```js
+const processor = config.createGroupTransformProcessor([
+  { type: 'colorSpace', source: 'ACEScg', destination: 'ACEScct' },
+  { type: 'file', src: '/project/luts/grade.cube', interpolation: 'tetrahedral' },
+  { type: 'colorSpace', source: 'ACEScct', destination: 'ACEScg' }
+], {
+  context: { SHOT: '010' },
+  optimization: 'lossless'
+});
+
+const shaderInfo = processor.getGpuShaderInfo({
+  language: 'glsl_es_3.0',
+  functionName: 'OCIOGrade',
+  resourcePrefix: 'ocio_grade'
+});
+```
+
+Supported group descriptors are `colorSpace`, `file`, `look`, `displayView`, and `named`.
+File descriptors support direction, interpolation, CCC/CDL selection, and CDL clamp style.
+Display/view descriptors may bypass configured looks or data transforms when required.
+
+The metadata APIs are intended for building validated application UI:
+
+```js
+const fileFormats = ocio.listFileTransformFormats();
+const supportsCube = ocio.isFileTransformFormatSupported('.cube');
+const look = config.getLook('Show Look');
+const namedTransform = config.getNamedTransform('Utility Curve');
+const resultSpace = config.getLooksResultColorSpace('+Show Look');
+```
+
+Paths used by `FileTransform` are resolved by OpenColorIO against the config context and working
+directory. In browsers, copy files into the Emscripten filesystem with `writeFile()` before
+creating the processor.
+
 ## Build From Source
 
 This checkout expects local OpenColorIO 2.5 and Emscripten checkouts. By default the build script uses:

@@ -21,9 +21,11 @@ std::string g_stringResult;
 int g_nextConfigHandle = 1;
 int g_nextContextHandle = 1;
 int g_nextProcessorHandle = 1;
+int g_nextGroupTransformHandle = 1;
 
 std::unordered_map<int, OCIO::ConstConfigRcPtr> g_configs;
 std::unordered_map<int, OCIO::ContextRcPtr> g_contexts;
+std::unordered_map<int, OCIO::GroupTransformRcPtr> g_groupTransforms;
 
 struct ProcessorRecord
 {
@@ -110,6 +112,44 @@ ProcessorRecord & requireProcessor(int handle)
         throw std::runtime_error(stream.str());
     }
     return it->second;
+}
+
+OCIO::GroupTransformRcPtr requireGroupTransform(int handle)
+{
+    const auto it = g_groupTransforms.find(handle);
+    if (it == g_groupTransforms.end())
+    {
+        std::ostringstream stream;
+        stream << "Invalid OCIO group transform handle: " << handle;
+        throw std::runtime_error(stream.str());
+    }
+    return it->second;
+}
+
+OCIO::ConstLookRcPtr requireLook(const OCIO::ConstConfigRcPtr & config, const char * name)
+{
+    OCIO::ConstLookRcPtr look = config->getLook(name);
+    if (!look)
+    {
+        std::ostringstream stream;
+        stream << "Look not found: " << (name ? name : "");
+        throw std::runtime_error(stream.str());
+    }
+    return look;
+}
+
+OCIO::ConstNamedTransformRcPtr requireNamedTransform(
+    const OCIO::ConstConfigRcPtr & config,
+    const char * name)
+{
+    OCIO::ConstNamedTransformRcPtr namedTransform = config->getNamedTransform(name);
+    if (!namedTransform)
+    {
+        std::ostringstream stream;
+        stream << "Named transform not found: " << (name ? name : "");
+        throw std::runtime_error(stream.str());
+    }
+    return namedTransform;
 }
 
 OCIO::ConstColorSpaceRcPtr requireColorSpace(const OCIO::ConstConfigRcPtr & config, const char * name)
@@ -318,6 +358,35 @@ int getGpuUniformValueCount(const OCIO::GpuShaderDesc::UniformData & data)
 OCIO::TransformDirection parseDirection(int direction)
 {
     return direction == 1 ? OCIO::TRANSFORM_DIR_INVERSE : OCIO::TRANSFORM_DIR_FORWARD;
+}
+
+OCIO::Interpolation parseInterpolation(int interpolation)
+{
+    switch (interpolation)
+    {
+        case OCIO::INTERP_UNKNOWN:
+        case OCIO::INTERP_NEAREST:
+        case OCIO::INTERP_LINEAR:
+        case OCIO::INTERP_TETRAHEDRAL:
+        case OCIO::INTERP_CUBIC:
+        case OCIO::INTERP_DEFAULT:
+        case OCIO::INTERP_BEST:
+            return static_cast<OCIO::Interpolation>(interpolation);
+        default:
+            throw std::runtime_error("Invalid OCIO interpolation value");
+    }
+}
+
+OCIO::CDLStyle parseCDLStyle(int style)
+{
+    switch (style)
+    {
+        case OCIO::CDL_ASC:
+        case OCIO::CDL_NO_CLAMP:
+            return static_cast<OCIO::CDLStyle>(style);
+        default:
+            throw std::runtime_error("Invalid OCIO CDL style value");
+    }
 }
 
 float clamp01(float value)
@@ -755,6 +824,43 @@ const char * ocio_config_get_look_name(int handle, int index)
     OCIO_BRIDGE_CATCH(nullptr)
 }
 
+const char * ocio_config_get_look_process_space(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireLook(requireConfig(handle), name)->getProcessSpace());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_look_description(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireLook(requireConfig(handle), name)->getDescription());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_config_look_has_transform(int handle, const char * name, int direction)
+{
+    OCIO_BRIDGE_TRY
+    const auto look = requireLook(requireConfig(handle), name);
+    const auto transform = parseDirection(direction) == OCIO::TRANSFORM_DIR_INVERSE
+        ? look->getInverseTransform()
+        : look->getTransform();
+    return transform ? 1 : 0;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_config_get_looks_result_color_space(
+    int handle,
+    int contextHandle,
+    const char * looks)
+{
+    OCIO_BRIDGE_TRY
+    const auto config = requireConfig(handle);
+    const auto context = contextHandle ? requireContext(contextHandle) : config->getCurrentContext();
+    return result(OCIO::LookTransform::GetLooksResultColorSpace(config, context, looks));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
 int ocio_config_get_num_view_transforms(int handle)
 {
     OCIO_BRIDGE_TRY
@@ -781,6 +887,111 @@ const char * ocio_config_get_named_transform_name(int handle, int index)
     OCIO_BRIDGE_TRY
     return result(requireConfig(handle)->getNamedTransformNameByIndex(index));
     OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_named_transform_canonical_name(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireNamedTransform(requireConfig(handle), name)->getName());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_named_transform_family(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireNamedTransform(requireConfig(handle), name)->getFamily());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_named_transform_description(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireNamedTransform(requireConfig(handle), name)->getDescription());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_config_get_named_transform_encoding(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireNamedTransform(requireConfig(handle), name)->getEncoding());
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_config_get_num_named_transform_aliases(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return checkedIntCount(
+        requireNamedTransform(requireConfig(handle), name)->getNumAliases(),
+        "OCIO named transform alias count");
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_config_get_named_transform_alias(
+    int handle,
+    const char * name,
+    int index)
+{
+    OCIO_BRIDGE_TRY
+    if (index < 0)
+    {
+        throw std::runtime_error("Invalid OCIO named transform alias index");
+    }
+    return result(requireNamedTransform(requireConfig(handle), name)->getAlias(
+        static_cast<size_t>(index)));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_config_get_num_named_transform_categories(int handle, const char * name)
+{
+    OCIO_BRIDGE_TRY
+    return requireNamedTransform(requireConfig(handle), name)->getNumCategories();
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_config_get_named_transform_category(
+    int handle,
+    const char * name,
+    int index)
+{
+    OCIO_BRIDGE_TRY
+    return result(requireNamedTransform(requireConfig(handle), name)->getCategory(index));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_config_named_transform_has_transform(int handle, const char * name, int direction)
+{
+    OCIO_BRIDGE_TRY
+    const auto namedTransform = requireNamedTransform(requireConfig(handle), name);
+    return namedTransform->getTransform(parseDirection(direction)) ? 1 : 0;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_file_transform_get_num_formats()
+{
+    OCIO_BRIDGE_TRY
+    return OCIO::FileTransform::GetNumFormats();
+    OCIO_BRIDGE_CATCH(0)
+}
+
+const char * ocio_file_transform_get_format_name(int index)
+{
+    OCIO_BRIDGE_TRY
+    return result(OCIO::FileTransform::GetFormatNameByIndex(index));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+const char * ocio_file_transform_get_format_extension(int index)
+{
+    OCIO_BRIDGE_TRY
+    return result(OCIO::FileTransform::GetFormatExtensionByIndex(index));
+    OCIO_BRIDGE_CATCH(nullptr)
+}
+
+int ocio_file_transform_is_format_extension_supported(const char * extension)
+{
+    OCIO_BRIDGE_TRY
+    return OCIO::FileTransform::IsFormatExtensionSupported(extension) ? 1 : 0;
+    OCIO_BRIDGE_CATCH(0)
 }
 
 int ocio_context_create(int configHandle)
@@ -840,6 +1051,162 @@ int ocio_processor_create_display_view(
             view,
             parseDirection(direction))
         : config->getProcessor(source, display, view, parseDirection(direction));
+    return storeProcessor(processor, optimizationFlags);
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_create_named_transform(
+    int configHandle,
+    int contextHandle,
+    const char * name,
+    int direction,
+    int optimizationFlags)
+{
+    OCIO_BRIDGE_TRY
+    const auto config = requireConfig(configHandle);
+    OCIO::ConstProcessorRcPtr processor = contextHandle
+        ? config->getProcessor(requireContext(contextHandle), name, parseDirection(direction))
+        : config->getProcessor(name, parseDirection(direction));
+    return storeProcessor(processor, optimizationFlags);
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_group_transform_create()
+{
+    OCIO_BRIDGE_TRY
+    const int handle = g_nextGroupTransformHandle++;
+    g_groupTransforms.emplace(handle, OCIO::GroupTransform::Create());
+    return handle;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+void ocio_group_transform_release(int handle)
+{
+    g_groupTransforms.erase(handle);
+}
+
+int ocio_group_transform_append_color_space(
+    int groupHandle,
+    const char * source,
+    const char * destination,
+    int direction,
+    int dataBypass)
+{
+    OCIO_BRIDGE_TRY
+    auto transform = OCIO::ColorSpaceTransform::Create();
+    transform->setSrc(source);
+    transform->setDst(destination);
+    transform->setDirection(parseDirection(direction));
+    transform->setDataBypass(dataBypass != 0);
+    transform->validate();
+    requireGroupTransform(groupHandle)->appendTransform(transform);
+    return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_group_transform_append_file(
+    int groupHandle,
+    const char * source,
+    int direction,
+    int interpolation,
+    const char * cccId,
+    int cdlStyle)
+{
+    OCIO_BRIDGE_TRY
+    auto transform = OCIO::FileTransform::Create();
+    transform->setSrc(source);
+    transform->setDirection(parseDirection(direction));
+    transform->setInterpolation(parseInterpolation(interpolation));
+    transform->setCCCId(cccId);
+    transform->setCDLStyle(parseCDLStyle(cdlStyle));
+    transform->validate();
+    requireGroupTransform(groupHandle)->appendTransform(transform);
+    return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_group_transform_append_look(
+    int groupHandle,
+    const char * source,
+    const char * destination,
+    const char * looks,
+    int direction,
+    int skipColorSpaceConversion)
+{
+    OCIO_BRIDGE_TRY
+    auto transform = OCIO::LookTransform::Create();
+    transform->setSrc(source);
+    transform->setDst(destination);
+    transform->setLooks(looks);
+    transform->setDirection(parseDirection(direction));
+    transform->setSkipColorSpaceConversion(skipColorSpaceConversion != 0);
+    transform->validate();
+    requireGroupTransform(groupHandle)->appendTransform(transform);
+    return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_group_transform_append_display_view(
+    int groupHandle,
+    const char * source,
+    const char * display,
+    const char * view,
+    int direction,
+    int looksBypass,
+    int dataBypass)
+{
+    OCIO_BRIDGE_TRY
+    auto transform = OCIO::DisplayViewTransform::Create();
+    transform->setSrc(source);
+    transform->setDisplay(display);
+    transform->setView(view);
+    transform->setDirection(parseDirection(direction));
+    transform->setLooksBypass(looksBypass != 0);
+    transform->setDataBypass(dataBypass != 0);
+    transform->validate();
+    requireGroupTransform(groupHandle)->appendTransform(transform);
+    return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_group_transform_append_named(
+    int groupHandle,
+    int configHandle,
+    const char * name,
+    int direction)
+{
+    OCIO_BRIDGE_TRY
+    const auto namedTransform = requireNamedTransform(requireConfig(configHandle), name);
+    const auto transform = OCIO::NamedTransform::GetTransform(
+        namedTransform,
+        parseDirection(direction));
+    if (!transform)
+    {
+        std::ostringstream stream;
+        stream << "Named transform has no usable transform: " << (name ? name : "");
+        throw std::runtime_error(stream.str());
+    }
+    requireGroupTransform(groupHandle)->appendTransform(transform->createEditableCopy());
+    return 1;
+    OCIO_BRIDGE_CATCH(0)
+}
+
+int ocio_processor_create_group_transform(
+    int configHandle,
+    int contextHandle,
+    int groupHandle,
+    int direction,
+    int optimizationFlags)
+{
+    OCIO_BRIDGE_TRY
+    const auto config = requireConfig(configHandle);
+    const auto group = requireGroupTransform(groupHandle);
+    OCIO::ConstProcessorRcPtr processor = contextHandle
+        ? config->getProcessor(
+            requireContext(contextHandle),
+            group,
+            parseDirection(direction))
+        : config->getProcessor(group, parseDirection(direction));
     return storeProcessor(processor, optimizationFlags);
     OCIO_BRIDGE_CATCH(0)
 }

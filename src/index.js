@@ -20,6 +20,21 @@ export const OptimizationFlags = Object.freeze({
   DRAFT: -1
 });
 
+export const Interpolation = Object.freeze({
+  UNKNOWN: 0,
+  NEAREST: 1,
+  LINEAR: 2,
+  TETRAHEDRAL: 3,
+  CUBIC: 4,
+  DEFAULT: 254,
+  BEST: 255
+});
+
+export const CDLStyle = Object.freeze({
+  ASC: 0,
+  NO_CLAMP: 1
+});
+
 const DEFAULT_GPU_SHADER_FUNCTION = 'OCIODisplay';
 const DEFAULT_GPU_RESOURCE_PREFIX = 'ocio';
 const GPU_UNIFORM_TYPES = Object.freeze([
@@ -56,6 +71,59 @@ function toOptimizationFlags(value) {
     return OptimizationFlags[key];
   }
   throw new Error(`Unknown OCIO optimization mode: ${value}`);
+}
+
+function toEnumValue(value, values, aliases, label, defaultValue) {
+  if (value === undefined || value === null || value === '') {
+    return defaultValue;
+  }
+  if (typeof value === 'number' && Object.values(values).includes(value)) {
+    return value;
+  }
+  const key = String(value).toLowerCase().replace(/[\s_]/g, '-');
+  const resolvedKey = aliases[key] ?? key.toUpperCase().replace(/-/g, '_');
+  if (Object.hasOwn(values, resolvedKey)) {
+    return values[resolvedKey];
+  }
+  throw new Error(`Unknown OCIO ${label}: ${value}`);
+}
+
+function toInterpolation(value) {
+  return toEnumValue(
+    value,
+    Interpolation,
+    { tetra: 'TETRAHEDRAL', trilinear: 'LINEAR' },
+    'interpolation',
+    Interpolation.DEFAULT
+  );
+}
+
+function toCDLStyle(value) {
+  return toEnumValue(
+    value,
+    CDLStyle,
+    { 'no-clamp': 'NO_CLAMP', noclamp: 'NO_CLAMP' },
+    'CDL style',
+    CDLStyle.NO_CLAMP
+  );
+}
+
+function requireNonEmptyString(value, name) {
+  const text = value == null ? '' : String(value).trim();
+  if (!text) {
+    throw new TypeError(`${name} must be a non-empty string`);
+  }
+  return text;
+}
+
+function toOptionalBoolean(value, defaultValue, name) {
+  if (value === undefined) {
+    return defaultValue;
+  }
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${name} must be a boolean`);
+  }
+  return value;
 }
 
 function normalizeGpuLanguage(value) {
@@ -139,6 +207,21 @@ export class OCIO {
 
   getBuiltinConfigYaml(name) {
     return this._withCString(name, (namePtr) => this._string('ocio_builtin_config_get_yaml', namePtr));
+  }
+
+  listFileTransformFormats() {
+    const count = this.module._ocio_file_transform_get_num_formats();
+    return Array.from({ length: count }, (_, index) => ({
+      name: this._string('ocio_file_transform_get_format_name', index),
+      extension: this._string('ocio_file_transform_get_format_extension', index)
+    }));
+  }
+
+  isFileTransformFormatSupported(extension) {
+    const value = requireNonEmptyString(extension, 'OCIO file-transform extension');
+    return this._withCString(value, (extensionPtr) => (
+      this.module._ocio_file_transform_is_format_extension_supported(extensionPtr) === 1
+    ));
   }
 
   createBuiltinConfig(name = ACES_CG_V4_CONFIG) {
@@ -418,6 +501,61 @@ export class Config {
     return Array.from({ length: count }, (_, index) => this.ocio._string('ocio_config_get_look_name', this.handle, index));
   }
 
+  getLook(name) {
+    const resolvedName = requireNonEmptyString(name, 'OCIO look name');
+    return this.ocio._withCString(resolvedName, (namePtr) => {
+      const processSpace = this.ocio._string(
+        'ocio_config_get_look_process_space',
+        this.handle,
+        namePtr
+      );
+      if (!processSpace) {
+        throw new Error(`Could not get OCIO look ${resolvedName}: ${this.ocio.lastError}`);
+      }
+      return {
+        name: resolvedName,
+        processSpace,
+        description: this.ocio._string(
+          'ocio_config_get_look_description',
+          this.handle,
+          namePtr
+        ),
+        hasForwardTransform:
+          this.ocio.module._ocio_config_look_has_transform(
+            this.handle,
+            namePtr,
+            TransformDirection.FORWARD
+          ) === 1,
+        hasInverseTransform:
+          this.ocio.module._ocio_config_look_has_transform(
+            this.handle,
+            namePtr,
+            TransformDirection.INVERSE
+          ) === 1
+      };
+    });
+  }
+
+  getLooksResultColorSpace(looks, options = {}) {
+    const resolvedLooks = requireNonEmptyString(looks, 'OCIO looks');
+    return this._withContext(options.context, (contextHandle) => (
+      this.ocio._withCString(resolvedLooks, (looksPtr) => {
+        const colorSpace = this.ocio._string(
+          'ocio_config_get_looks_result_color_space',
+          this.handle,
+          contextHandle,
+          looksPtr
+        );
+        if (!colorSpace) {
+          throw new Error(
+            `Could not resolve OCIO looks ${resolvedLooks}: ${this.ocio.lastError}`
+          );
+        }
+        return colorSpace;
+      })
+    ));
+  }
+
   listViewTransforms() {
     const count = this.ocio.module._ocio_config_get_num_view_transforms(this.handle);
     return Array.from({ length: count }, (_, index) => (
@@ -430,6 +568,72 @@ export class Config {
     return Array.from({ length: count }, (_, index) => (
       this.ocio._string('ocio_config_get_named_transform_name', this.handle, index)
     ));
+  }
+
+  getNamedTransform(name) {
+    const resolvedName = requireNonEmptyString(name, 'OCIO named-transform name');
+    return this.ocio._withCString(resolvedName, (namePtr) => {
+      const canonicalName = this.ocio._string(
+        'ocio_config_get_named_transform_canonical_name',
+        this.handle,
+        namePtr
+      );
+      if (!canonicalName) {
+        throw new Error(
+          `Could not get OCIO named transform ${resolvedName}: ${this.ocio.lastError}`
+        );
+      }
+      const aliasCount = this.ocio.module._ocio_config_get_num_named_transform_aliases(
+        this.handle,
+        namePtr
+      );
+      const categoryCount = this.ocio.module._ocio_config_get_num_named_transform_categories(
+        this.handle,
+        namePtr
+      );
+      return {
+        name: canonicalName,
+        family: this.ocio._string(
+          'ocio_config_get_named_transform_family',
+          this.handle,
+          namePtr
+        ),
+        description: this.ocio._string(
+          'ocio_config_get_named_transform_description',
+          this.handle,
+          namePtr
+        ),
+        encoding: this.ocio._string(
+          'ocio_config_get_named_transform_encoding',
+          this.handle,
+          namePtr
+        ),
+        aliases: Array.from({ length: aliasCount }, (_, index) => this.ocio._string(
+          'ocio_config_get_named_transform_alias',
+          this.handle,
+          namePtr,
+          index
+        )),
+        categories: Array.from({ length: categoryCount }, (_, index) => this.ocio._string(
+          'ocio_config_get_named_transform_category',
+          this.handle,
+          namePtr,
+          index
+        )),
+        hasForwardTransform:
+          this.ocio.module._ocio_config_named_transform_has_transform(
+            this.handle,
+            namePtr,
+            TransformDirection.FORWARD
+          ) === 1,
+        hasInverseTransform:
+          this.ocio.module._ocio_config_named_transform_has_transform(
+            this.handle,
+            namePtr,
+            TransformDirection.INVERSE
+          ) === 1
+      };
+    });
   }
 
   createColorSpaceProcessor(source, destination, options = {}) {
@@ -455,8 +659,23 @@ export class Config {
     view,
     direction = TransformDirection.FORWARD,
     optimization,
-    context
+    context,
+    looksBypass,
+    dataBypass
   } = {}) {
+    if (looksBypass !== undefined || dataBypass !== undefined) {
+      return this.createGroupTransformProcessor([
+        {
+          type: 'displayView',
+          source,
+          display,
+          view,
+          direction,
+          looksBypass,
+          dataBypass
+        }
+      ], { optimization, context });
+    }
     const optimizationFlags = toOptimizationFlags(optimization);
     const transformDirection = toDirection(direction);
     const handle = this._withContext(context, (contextHandle) => (
@@ -474,6 +693,213 @@ export class Config {
     ));
     this.ocio._assertHandle(handle, `Could not create OCIO Display/View processor ${source} -> ${display}/${view}`);
     return new Processor(this.ocio, handle);
+  }
+
+  createNamedTransformProcessor(name, options = {}) {
+    const resolvedName = requireNonEmptyString(name, 'OCIO named-transform name');
+    const optimization = toOptimizationFlags(options.optimization);
+    const direction = toDirection(options.direction);
+    const handle = this._withContext(options.context, (contextHandle) => (
+      this.ocio._withCString(resolvedName, (namePtr) => (
+        this.ocio.module._ocio_processor_create_named_transform(
+          this.handle,
+          contextHandle,
+          namePtr,
+          direction,
+          optimization
+        )
+      ))
+    ));
+    this.ocio._assertHandle(handle, `Could not create OCIO NamedTransform processor ${resolvedName}`);
+    return new Processor(this.ocio, handle);
+  }
+
+  createFileTransformProcessor(options = {}) {
+    return this.createGroupTransformProcessor(
+      [{ type: 'file', ...options }],
+      { optimization: options.optimization, context: options.context }
+    );
+  }
+
+  createLookTransformProcessor(options = {}) {
+    return this.createGroupTransformProcessor(
+      [{ type: 'look', ...options }],
+      { optimization: options.optimization, context: options.context }
+    );
+  }
+
+  createGroupTransformProcessor(transforms, options = {}) {
+    if (!Array.isArray(transforms) || transforms.length === 0) {
+      throw new TypeError('OCIO group transforms require a non-empty transform array');
+    }
+
+    const groupHandle = this.ocio.module._ocio_group_transform_create();
+    this.ocio._assertHandle(groupHandle, 'Could not create OCIO GroupTransform');
+    try {
+      transforms.forEach((transform, index) => {
+        try {
+          this._appendGroupTransform(groupHandle, transform);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`Invalid OCIO group transform at index ${index}: ${message}`, {
+            cause: error
+          });
+        }
+      });
+
+      const optimization = toOptimizationFlags(options.optimization);
+      const direction = toDirection(options.direction);
+      const handle = this._withContext(options.context, (contextHandle) => (
+        this.ocio.module._ocio_processor_create_group_transform(
+          this.handle,
+          contextHandle,
+          groupHandle,
+          direction,
+          optimization
+        )
+      ));
+      this.ocio._assertHandle(handle, 'Could not create OCIO GroupTransform processor');
+      return new Processor(this.ocio, handle);
+    } finally {
+      this.ocio.module._ocio_group_transform_release(groupHandle);
+    }
+  }
+
+  _appendGroupTransform(groupHandle, transform) {
+    if (!transform || typeof transform !== 'object' || Array.isArray(transform)) {
+      throw new TypeError('OCIO transform descriptor must be an object');
+    }
+
+    const direction = toDirection(transform.direction);
+    if (transform.type === 'colorSpace') {
+      const source = requireNonEmptyString(transform.source, 'ColorSpaceTransform source');
+      const destination = requireNonEmptyString(
+        transform.destination,
+        'ColorSpaceTransform destination'
+      );
+      const dataBypass = toOptionalBoolean(
+        transform.dataBypass,
+        true,
+        'ColorSpaceTransform dataBypass'
+      );
+      this.ocio._withCStrings([source, destination], ([sourcePtr, destinationPtr]) => {
+        this.ocio._assertStatus(
+          this.ocio.module._ocio_group_transform_append_color_space(
+            groupHandle,
+            sourcePtr,
+            destinationPtr,
+            direction,
+            dataBypass ? 1 : 0
+          ),
+          `Could not append OCIO ColorSpaceTransform ${source} -> ${destination}`
+        );
+      });
+      return;
+    }
+
+    if (transform.type === 'file') {
+      const src = requireNonEmptyString(transform.src, 'FileTransform src');
+      const cccId = transform.cccId == null ? '' : String(transform.cccId);
+      const interpolation = toInterpolation(transform.interpolation);
+      const cdlStyle = toCDLStyle(transform.cdlStyle);
+      this.ocio._withCStrings([src, cccId], ([srcPtr, cccIdPtr]) => {
+        this.ocio._assertStatus(
+          this.ocio.module._ocio_group_transform_append_file(
+            groupHandle,
+            srcPtr,
+            direction,
+            interpolation,
+            cccIdPtr,
+            cdlStyle
+          ),
+          `Could not append OCIO FileTransform ${src}`
+        );
+      });
+      return;
+    }
+
+    if (transform.type === 'look') {
+      const source = requireNonEmptyString(transform.source, 'LookTransform source');
+      const destination = requireNonEmptyString(
+        transform.destination,
+        'LookTransform destination'
+      );
+      const looks = requireNonEmptyString(transform.looks, 'LookTransform looks');
+      const skipColorSpaceConversion = toOptionalBoolean(
+        transform.skipColorSpaceConversion,
+        false,
+        'LookTransform skipColorSpaceConversion'
+      );
+      this.ocio._withCStrings(
+        [source, destination, looks],
+        ([sourcePtr, destinationPtr, looksPtr]) => {
+          this.ocio._assertStatus(
+            this.ocio.module._ocio_group_transform_append_look(
+              groupHandle,
+              sourcePtr,
+              destinationPtr,
+              looksPtr,
+              direction,
+              skipColorSpaceConversion ? 1 : 0
+            ),
+            `Could not append OCIO LookTransform ${looks}`
+          );
+        }
+      );
+      return;
+    }
+
+    if (transform.type === 'displayView') {
+      const source = requireNonEmptyString(transform.source, 'DisplayViewTransform source');
+      const display = requireNonEmptyString(transform.display, 'DisplayViewTransform display');
+      const view = requireNonEmptyString(transform.view, 'DisplayViewTransform view');
+      const looksBypass = toOptionalBoolean(
+        transform.looksBypass,
+        false,
+        'DisplayViewTransform looksBypass'
+      );
+      const dataBypass = toOptionalBoolean(
+        transform.dataBypass,
+        true,
+        'DisplayViewTransform dataBypass'
+      );
+      this.ocio._withCStrings(
+        [source, display, view],
+        ([sourcePtr, displayPtr, viewPtr]) => {
+          this.ocio._assertStatus(
+            this.ocio.module._ocio_group_transform_append_display_view(
+              groupHandle,
+              sourcePtr,
+              displayPtr,
+              viewPtr,
+              direction,
+              looksBypass ? 1 : 0,
+              dataBypass ? 1 : 0
+            ),
+            `Could not append OCIO DisplayViewTransform ${display}/${view}`
+          );
+        }
+      );
+      return;
+    }
+
+    if (transform.type === 'named') {
+      const name = requireNonEmptyString(transform.name, 'NamedTransform name');
+      this.ocio._withCString(name, (namePtr) => {
+        this.ocio._assertStatus(
+          this.ocio.module._ocio_group_transform_append_named(
+            groupHandle,
+            this.handle,
+            namePtr,
+            direction
+          ),
+          `Could not append OCIO NamedTransform ${name}`
+        );
+      });
+      return;
+    }
+
+    throw new Error(`Unknown OCIO group transform type: ${transform.type}`);
   }
 
   _withContext(context, callback) {

@@ -17,6 +17,56 @@ export const OptimizationFlags: Readonly<{
   DRAFT: -1;
 }>;
 
+export const Interpolation: Readonly<{
+  UNKNOWN: 0;
+  NEAREST: 1;
+  LINEAR: 2;
+  TETRAHEDRAL: 3;
+  CUBIC: 4;
+  DEFAULT: 254;
+  BEST: 255;
+}>;
+
+export const CDLStyle: Readonly<{
+  ASC: 0;
+  NO_CLAMP: 1;
+}>;
+
+export type TransformDirectionValue = 0 | 1 | 'forward' | 'inverse';
+export type OptimizationValue =
+  | number
+  | 'default'
+  | 'none'
+  | 'lossless'
+  | 'very-good'
+  | 'good'
+  | 'draft';
+export type InterpolationValue =
+  | 0
+  | 1
+  | 2
+  | 3
+  | 4
+  | 254
+  | 255
+  | 'unknown'
+  | 'nearest'
+  | 'linear'
+  | 'trilinear'
+  | 'tetra'
+  | 'tetrahedral'
+  | 'cubic'
+  | 'default'
+  | 'best';
+export type CDLStyleValue = 0 | 1 | 'asc' | 'no-clamp' | 'no_clamp' | 'noclamp';
+export type OcioContextVariables = Readonly<Record<string, string>>;
+
+export interface ProcessorOptions {
+  direction?: TransformDirectionValue;
+  optimization?: OptimizationValue;
+  context?: OcioContextVariables;
+}
+
 export interface CreateOCIOOptions {
   moduleFactory?: (options?: unknown) => Promise<unknown>;
   moduleOptions?: Record<string, unknown>;
@@ -73,14 +123,96 @@ export interface FileRuleMatch {
   custom: Record<string, string>;
 }
 
-export interface DisplayViewProcessorOptions {
+export interface FileTransformFormatInfo {
+  name: string;
+  extension: string;
+}
+
+export interface LookInfo {
+  name: string;
+  processSpace: string;
+  description: string;
+  hasForwardTransform: boolean;
+  hasInverseTransform: boolean;
+}
+
+export interface NamedTransformInfo {
+  name: string;
+  family: string;
+  description: string;
+  encoding: string;
+  aliases: string[];
+  categories: string[];
+  hasForwardTransform: boolean;
+  hasInverseTransform: boolean;
+}
+
+export interface DisplayViewTransformOptions extends ProcessorOptions {
   source: string;
   display: string;
   view: string;
-  direction?: 0 | 1 | 'forward' | 'inverse';
-  optimization?: number | 'default' | 'none' | 'lossless' | 'very-good' | 'good' | 'draft';
-  context?: Readonly<Record<string, string>>;
+  looksBypass?: boolean;
+  dataBypass?: boolean;
 }
+
+export type DisplayViewProcessorOptions = DisplayViewTransformOptions;
+
+export interface ColorSpaceTransformDescriptor {
+  type: 'colorSpace';
+  source: string;
+  destination: string;
+  direction?: TransformDirectionValue;
+  dataBypass?: boolean;
+}
+
+export interface FileTransformDescriptor {
+  type: 'file';
+  src: string;
+  direction?: TransformDirectionValue;
+  interpolation?: InterpolationValue;
+  cccId?: string;
+  cdlStyle?: CDLStyleValue;
+}
+
+export interface LookTransformDescriptor {
+  type: 'look';
+  source: string;
+  destination: string;
+  looks: string;
+  direction?: TransformDirectionValue;
+  skipColorSpaceConversion?: boolean;
+}
+
+export interface DisplayViewTransformDescriptor {
+  type: 'displayView';
+  source: string;
+  display: string;
+  view: string;
+  direction?: TransformDirectionValue;
+  looksBypass?: boolean;
+  dataBypass?: boolean;
+}
+
+export interface NamedTransformDescriptor {
+  type: 'named';
+  name: string;
+  direction?: TransformDirectionValue;
+}
+
+export type TransformDescriptor =
+  | ColorSpaceTransformDescriptor
+  | FileTransformDescriptor
+  | LookTransformDescriptor
+  | DisplayViewTransformDescriptor
+  | NamedTransformDescriptor;
+
+export interface FileTransformProcessorOptions
+  extends Omit<FileTransformDescriptor, 'type'>,
+    Omit<ProcessorOptions, 'direction'> {}
+
+export interface LookTransformProcessorOptions
+  extends Omit<LookTransformDescriptor, 'type'>,
+    Omit<ProcessorOptions, 'direction'> {}
 
 export type GpuShaderLanguage =
   | 'glsl'
@@ -141,6 +273,8 @@ export class OCIO {
   clearAllCaches(): void;
   listBuiltinConfigs(): BuiltinConfigInfo[];
   getBuiltinConfigYaml(name: string): string;
+  listFileTransformFormats(): FileTransformFormatInfo[];
+  isFileTransformFormatSupported(extension: string): boolean;
   createBuiltinConfig(name?: string): Config;
   createConfigFromFile(path: string): Config;
   createConfigFromString(text: string, options?: { workingDir?: string }): Config;
@@ -165,13 +299,26 @@ export class Config {
   getView(display: string, view: string): ViewInfo;
   getDefaultView(display: string, colorSpace?: string): string;
   listLooks(): string[];
+  getLook(name: string): LookInfo;
+  getLooksResultColorSpace(
+    looks: string,
+    options?: { context?: OcioContextVariables },
+  ): string;
   listViewTransforms(): string[];
   listNamedTransforms(): string[];
+  getNamedTransform(name: string): NamedTransformInfo;
   createColorSpaceProcessor(source: string, destination: string, options?: {
-    optimization?: DisplayViewProcessorOptions['optimization'];
-    context?: Readonly<Record<string, string>>;
+    optimization?: OptimizationValue;
+    context?: OcioContextVariables;
   }): Processor;
   createDisplayViewProcessor(options: DisplayViewProcessorOptions): Processor;
+  createNamedTransformProcessor(name: string, options?: ProcessorOptions): Processor;
+  createFileTransformProcessor(options: FileTransformProcessorOptions): Processor;
+  createLookTransformProcessor(options: LookTransformProcessorOptions): Processor;
+  createGroupTransformProcessor(
+    transforms: readonly TransformDescriptor[],
+    options?: ProcessorOptions,
+  ): Processor;
 }
 
 export class Processor {
