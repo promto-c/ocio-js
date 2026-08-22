@@ -1,8 +1,10 @@
 # @bb-studio/ocio
 
-Unofficial OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.
+Unofficial OpenColorIO 2.5.2 WebAssembly bindings for browser and Node.js.
 
 This package is not affiliated with or endorsed by the OpenColorIO project.
+
+**Live demo:** https://promto-c.github.io/ocio-js/
 
 The native module links against OpenColorIO C++ and runs the OCIO CPU processor path in WebAssembly. The ACES demo uses the built-in `ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5` config.
 
@@ -200,7 +202,7 @@ creating the processor.
 
 ## Build From Source
 
-This checkout expects local OpenColorIO 2.5 and Emscripten checkouts. By default the build script uses:
+This checkout expects a local OpenColorIO 2.5.2 checkout and Emscripten. By default the build script uses:
 
 - `ocio`
 - `emsdk`
@@ -239,11 +241,26 @@ The test loads the wasm module in Node, creates the ACES v4 / ACES 2.0 built-in 
 
 ## Browser Demo
 
+For local development, serve the demo directly from the repository:
+
 ```sh
 npm run serve:demo
 ```
 
-Then open the URL printed by the script, usually `http://localhost:4173/examples/browser/`.
+To build and preview the same self-contained static site deployed to GitHub Pages:
+
+```sh
+npm run build:demo
+npm run preview:demo
+```
+
+`build:demo` creates `demo-dist/` using only browser runtime files. It does not rebuild OpenColorIO or Naga.
+
+The live demo is deployed from `main` by `.github/workflows/pages.yml` using GitHub Pages Actions:
+
+https://promto-c.github.io/ocio-js/
+
+For first-time setup, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**. Subsequent pushes to `main` deploy automatically; the workflow may also be run manually.
 
 The demo renders a generated HDR sample image through the OCIO display/view processor. You can choose the input color space, display, view, exposure, gain, gamma, or load your own image.
 

@@ -22,9 +22,11 @@ body {
 }
 
 .viewer {
-  display: grid;
-  place-items: center;
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
   padding: 24px;
   background:
     linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px),
@@ -33,13 +35,25 @@ body {
   background-size: 32px 32px;
 }
 
-canvas {
+.canvas-stage {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  place-items: center;
+  position: relative;
+}
+
+.viewer-canvas {
   width: min(100%, 1280px);
   height: auto;
   aspect-ratio: 16 / 9;
   display: block;
   background: #050505;
   border: 1px solid rgba(255,255,255,0.14);
+}
+
+.viewer-canvas[hidden] {
+  display: none;
 }
 
 .status {
@@ -63,6 +77,71 @@ canvas {
 .status.error {
   color: #fff;
   background: #b54747;
+}
+
+.shader-inspector {
+  flex: 0 0 auto;
+  min-width: 0;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 6px;
+  background: #111210;
+}
+
+.shader-inspector summary {
+  cursor: pointer;
+  padding: 9px 11px;
+  color: #d9dbd3;
+  font-size: 12px;
+  user-select: none;
+}
+
+.shader-inspector summary span {
+  margin-left: 8px;
+  color: #8a8d85;
+  font-weight: 400;
+}
+
+.shader-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 10px 8px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
+
+.shader-toolbar label {
+  width: min(260px, 100%);
+  padding-top: 8px;
+}
+
+.shader-inspector pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  color: #cfd5ca;
+  background: #0b0c0a;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.renderer-info {
+  padding: 8px 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  color: #b8bbb1;
+  background: #131412;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.renderer-info .available {
+  color: #7bd7b0;
+}
+
+.renderer-info .unavailable {
+  color: #8a8d85;
 }
 
 .panel {

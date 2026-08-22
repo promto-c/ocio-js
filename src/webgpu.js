@@ -14,6 +14,13 @@ export function normalizeOcioVulkanGlsl(shaderInfo) {
     source = `#version 460\n${source}`;
   }
 
+  // Naga's GLSL frontend cannot validate stores through nested swizzles such as
+  // `color.rgb.r`. These are exactly equivalent to direct component access.
+  source = source
+    .replace(/\.rgb\.r\b/g, '.r')
+    .replace(/\.rgb\.g\b/g, '.g')
+    .replace(/\.rgb\.b\b/g, '.b');
+
   const declarations = [...source.matchAll(COMBINED_SAMPLER_PATTERN)];
   const maxBindingByGroup = new Map();
   for (const match of declarations) {
@@ -72,6 +79,7 @@ export async function buildWebGpuShaderInfo(shaderInfo) {
   const shaderText = await translateGlslFragmentToWgsl(normalized.source);
   return {
     shaderText,
+    sourceShaderText: shaderInfo.shaderText,
     functionName: shaderInfo.functionName,
     language: 'wgsl',
     sourceLanguage: shaderInfo.language,

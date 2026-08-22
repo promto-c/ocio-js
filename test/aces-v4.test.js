@@ -4,7 +4,7 @@ import test from 'node:test';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ACES_CG_V4_CONFIG, createOCIO } from '@bb-studio/ocio';
+import { ACES_CG_V2_CONFIG, ACES_CG_V4_CONFIG, createOCIO } from '@bb-studio/ocio';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const wasmJsPath = join(root, 'dist', 'ocio-wasm.node.js');
@@ -89,6 +89,7 @@ test('OpenColorIO 2.5.2 wasm loads the ACES v4 built-in CG config', async (t) =>
   });
   assert.equal(webGpuShaderInfo.language, 'wgsl');
   assert.equal(webGpuShaderInfo.sourceLanguage, 'glsl_vk_4.6');
+  assert.match(webGpuShaderInfo.sourceShaderText, /OCIODisplay/);
   assert.match(webGpuShaderInfo.shaderText, /fn OCIODisplay/);
   assert.match(webGpuShaderInfo.shaderText, /@fragment/);
   for (const texture of webGpuShaderInfo.textures) {
@@ -96,12 +97,31 @@ test('OpenColorIO 2.5.2 wasm loads the ACES v4 built-in CG config', async (t) =>
     assert.ok(texture.sampler);
   }
 
+  const acesV2Config = ocio.createBuiltinConfig(ACES_CG_V2_CONFIG);
+  const acesV2Display = acesV2Config.getDefaultDisplay();
+  const acesV2View = acesV2Config.getDefaultView(acesV2Display, 'ACEScg')
+    || acesV2Config.listViews(acesV2Display)[0].name;
+  const acesV2Processor = acesV2Config.createDisplayViewProcessor({
+    source: 'ACEScg',
+    display: acesV2Display,
+    view: acesV2View,
+    optimization: 'lossless'
+  });
+  const acesV2WebGpu = await acesV2Processor.getWebGpuShaderInfo({
+    functionName: 'OCIODisplay',
+    resourcePrefix: 'ocio_webgpu_v2'
+  });
+  assert.match(acesV2WebGpu.shaderText, /fn OCIODisplay/);
+  assert.match(acesV2WebGpu.sourceShaderText, /\.rgb\.r\s*=/);
+
   const gamutProcessor = config.createColorSpaceProcessor('ACEScg', 'ACES2065-1');
   const red = gamutProcessor.applyRGBF32(new Float32Array([1, 0, 0]), { copy: true });
   assert.equal(red.length, 3);
   assert.notDeepEqual(Array.from(red), [1, 0, 0], 'ACEScg -> ACES2065-1 should be a real transform');
 
   processor.dispose();
+  acesV2Processor.dispose();
+  acesV2Config.dispose();
   gamutProcessor.dispose();
   config.dispose();
 });

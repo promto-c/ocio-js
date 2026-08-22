@@ -279,6 +279,7 @@ export interface OcioWebGpuTexture extends OcioGpuTexture {
 
 export interface WebGpuShaderInfo {
   shaderText: string;
+  sourceShaderText: string;
   functionName: string;
   language: 'wgsl';
   sourceLanguage: 'glsl_vk_4.6';

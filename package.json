@@ -28,6 +28,8 @@
     "pack:dry-run": "npm pack --dry-run",
     "prepublishOnly": "npm test",
     "serve:demo": "node scripts/serve-demo.mjs",
+    "build:demo": "node scripts/build-demo.mjs",
+    "preview:demo": "npm run build:demo && node scripts/serve-demo.mjs --static",
     "build:naga": "bash scripts/build-naga.sh",
     "build": "npm run build:naga && npm run build:wasm"
   },

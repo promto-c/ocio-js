@@ -5,6 +5,8 @@ const height = 540;
 
 const elements = {
   canvas: document.querySelector('#canvas'),
+  webgpuCanvas: document.querySelector('#webgpuCanvas'),
+  cpuCanvas: document.querySelector('#cpuCanvas'),
   status: document.querySelector('#status'),
   version: document.querySelector('#version'),
   source: document.querySelector('#source'),
@@ -22,7 +24,13 @@ const elements = {
   loadOcioFile: document.querySelector('#loadOcioFile'),
   loadConfigFolder: document.querySelector('#loadConfigFolder'),
   resetConfig: document.querySelector('#resetConfig'),
-  configInfo: document.querySelector('#configInfo')
+  configInfo: document.querySelector('#configInfo'),
+  rendererPath: document.querySelector('#rendererPath'),
+  rendererInfo: document.querySelector('#rendererInfo'),
+  shaderInspector: document.querySelector('#shaderInspector'),
+  shaderSummary: document.querySelector('#shaderSummary'),
+  shaderView: document.querySelector('#shaderView'),
+  shaderCode: document.querySelector('#shaderCode')
 };
 
 const ocioFileInput = document.createElement('input');
@@ -34,12 +42,13 @@ document.body.appendChild(ocioFileInput);
 let ocio;
 let config;
 let processor;
-let cpuContext = null;
+const cpuContext = elements.cpuCanvas.getContext('2d');
 const webglRenderer = createWebGLRenderer(elements.canvas);
-if (!webglRenderer) {
-  cpuContext = elements.canvas.getContext('2d', { willReadFrequently: true });
-}
+let webgpuRenderer = null;
+let webgpuInitError = null;
 let sourcePixels = createSamplePixels(width, height);
+let renderRevision = 0;
+let shaderInspection = createCpuShaderInspection();
 
 function createWebGLRenderer(canvas) {
   const gl = canvas.getContext('webgl2', { premultipliedAlpha: false });
@@ -97,10 +106,10 @@ void main() {
   let sourceTexture = null;
   let ocioTextures = [];
 
-  function getOcioProgram(shaderInfo) {
+  function getOcioProgram(shaderInfo, fragmentSource) {
     const key = shaderInfo.cacheId || shaderInfo.shaderText;
     if (!programCache.has(key)) {
-      programCache.set(key, createProgram(gl, vertexShader, buildOcioFragmentShader(shaderInfo)));
+      programCache.set(key, createProgram(gl, vertexShader, fragmentSource));
     }
     return programCache.get(key);
   }
@@ -240,14 +249,15 @@ void main() {
         textureMaxWidth: maxTextureSize,
         allowTexture1D: false
       });
-      const program = getOcioProgram(shaderInfo);
+      const usedShader = buildOcioFragmentShader(shaderInfo);
+      const program = getOcioProgram(shaderInfo, usedShader);
       bindSourceTexture(pixels, gl.FLOAT);
       uploadOcioTextures(shaderInfo);
       gl.useProgram(program);
       bindOcioUniforms(program, shaderInfo, params);
       draw(program);
       checkGLError(gl, 'OCIO WebGL render');
-      return shaderInfo;
+      return { shaderInfo, usedShader };
     },
 
     renderBytes(bytes) {
@@ -277,6 +287,372 @@ void main() {
   color.rgb = pow(max(color.rgb * u_exposureScale, vec3(0.0)), vec3(u_inverseGamma));
   fragColor = ${shaderInfo.functionName}(color);
 }`;
+}
+
+async function createWebGPURenderer(canvas, adapter) {
+  const requiredFeatures = adapter.features.has('float32-filterable')
+    ? ['float32-filterable']
+    : [];
+  const device = await adapter.requestDevice({ requiredFeatures });
+  const context = canvas.getContext('webgpu');
+  if (!context) {
+    throw new Error('WebGPU canvas context is unavailable');
+  }
+
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  context.configure({ device, format, alphaMode: 'opaque' });
+
+  const sourceTexture = device.createTexture({
+    label: 'OCIO demo source',
+    size: { width, height },
+    format: 'rgba32float',
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+  });
+  const toneBuffer = device.createBuffer({
+    label: 'OCIO demo tone controls',
+    size: 16,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM
+  });
+  const programCache = new Map();
+  const useFloat32Luts = device.features.has('float32-filterable');
+
+  async function getProgram(processorHandle) {
+    const key = processorHandle.cacheId;
+    if (!programCache.has(key)) {
+      const pending = (async () => {
+        const shaderInfo = await processorHandle.getWebGpuShaderInfo({
+          functionName: 'OCIODisplay',
+          resourcePrefix: 'ocio_webgpu'
+        });
+        const viewerGroup = getWebGpuViewerGroup(shaderInfo);
+        const viewerShader = buildWebGpuViewerShader(shaderInfo, viewerGroup);
+        const usedShader = `${shaderInfo.shaderText}\n\n${viewerShader}`;
+        const module = device.createShaderModule({
+          label: 'OCIO demo WGSL',
+          code: usedShader
+        });
+        await assertWebGpuShaderModule(module);
+
+        const descriptor = {
+          label: 'OCIO demo pipeline',
+          layout: 'auto',
+          vertex: { module, entryPoint: 'viewer_vertex' },
+          fragment: {
+            module,
+            entryPoint: 'viewer_fragment',
+            targets: [{ format }]
+          },
+          primitive: { topology: 'triangle-list' }
+        };
+        const pipeline = device.createRenderPipelineAsync
+          ? await device.createRenderPipelineAsync(descriptor)
+          : device.createRenderPipeline(descriptor);
+        const ocioBindGroups = createWebGpuOcioBindGroups(
+          device,
+          pipeline,
+          shaderInfo,
+          useFloat32Luts
+        );
+        const viewerBindGroup = device.createBindGroup({
+          label: 'OCIO demo viewer resources',
+          layout: pipeline.getBindGroupLayout(viewerGroup),
+          entries: [
+            { binding: 0, resource: sourceTexture.createView() },
+            { binding: 1, resource: { buffer: toneBuffer } }
+          ]
+        });
+
+        return {
+          shaderInfo,
+          usedShader,
+          pipeline,
+          ocioBindGroups,
+          viewerBindGroup,
+          viewerGroup
+        };
+      })();
+      programCache.set(key, pending);
+      pending.catch(() => programCache.delete(key));
+    }
+    return programCache.get(key);
+  }
+
+  return {
+    device,
+    useFloat32Luts,
+
+    async renderOcio(processorHandle, pixels, params) {
+      const program = await getProgram(processorHandle);
+      device.queue.writeTexture(
+        { texture: sourceTexture },
+        pixels,
+        { bytesPerRow: width * 4 * Float32Array.BYTES_PER_ELEMENT, rowsPerImage: height },
+        { width, height }
+      );
+      device.queue.writeBuffer(
+        toneBuffer,
+        0,
+        new Float32Array([params.exposureScale, params.inverseGamma, 0, 0])
+      );
+
+      const encoder = device.createCommandEncoder({ label: 'OCIO demo frame' });
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: context.getCurrentTexture().createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          loadOp: 'clear',
+          storeOp: 'store'
+        }]
+      });
+      pass.setPipeline(program.pipeline);
+      for (const [group, bindGroup] of program.ocioBindGroups) {
+        pass.setBindGroup(group, bindGroup);
+      }
+      pass.setBindGroup(program.viewerGroup, program.viewerBindGroup);
+      pass.draw(3);
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+
+      return {
+        shaderInfo: program.shaderInfo,
+        usedShader: program.usedShader,
+        texturePrecision: useFloat32Luts ? 'float32' : 'float16'
+      };
+    }
+  };
+}
+
+function getWebGpuViewerGroup(shaderInfo) {
+  const groups = [];
+  if (shaderInfo.uniformBinding) {
+    groups.push(shaderInfo.uniformBinding.group);
+  }
+  for (const texture of shaderInfo.textures) {
+    groups.push(texture.texture.group, texture.sampler.group);
+  }
+  return (groups.length ? Math.max(...groups) : -1) + 1;
+}
+
+function buildWebGpuViewerShader(shaderInfo, viewerGroup) {
+  return `struct ViewerTone {
+  exposure_scale: f32,
+  inverse_gamma: f32,
+  padding: vec2<f32>,
+};
+
+@group(${viewerGroup}) @binding(0) var viewer_source: texture_2d<f32>;
+@group(${viewerGroup}) @binding(1) var<uniform> viewer_tone: ViewerTone;
+
+@vertex
+fn viewer_vertex(@builtin(vertex_index) vertex_index: u32) -> @builtin(position) vec4<f32> {
+  let positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>(3.0, -1.0),
+    vec2<f32>(-1.0, 3.0),
+  );
+  return vec4<f32>(positions[vertex_index], 0.0, 1.0);
+}
+
+@fragment
+fn viewer_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+  var color = textureLoad(viewer_source, vec2<i32>(position.xy), 0);
+  color.rgb = pow(
+    max(color.rgb * viewer_tone.exposure_scale, vec3<f32>(0.0)),
+    vec3<f32>(viewer_tone.inverse_gamma),
+  );
+  return ${shaderInfo.functionName}(color);
+}`;
+}
+
+async function assertWebGpuShaderModule(module) {
+  if (typeof module.getCompilationInfo !== 'function') {
+    return;
+  }
+  const info = await module.getCompilationInfo();
+  const errors = info.messages.filter((message) => message.type === 'error');
+  if (errors.length) {
+    const detail = errors.slice(0, 3).map((message) => {
+      const location = message.lineNum ? `line ${message.lineNum}: ` : '';
+      return `${location}${message.message}`;
+    }).join('\n');
+    throw new Error(`WebGPU WGSL compilation failed: ${detail}`);
+  }
+}
+
+function createWebGpuOcioBindGroups(device, pipeline, shaderInfo, useFloat32) {
+  const entriesByGroup = new Map();
+  const retain = [];
+  const addEntry = (group, entry) => {
+    if (!entriesByGroup.has(group)) {
+      entriesByGroup.set(group, []);
+    }
+    entriesByGroup.get(group).push(entry);
+  };
+
+  if (shaderInfo.uniformBinding) {
+    const bytes = packWebGpuUniforms(shaderInfo);
+    const buffer = device.createBuffer({
+      label: 'OCIO uniforms',
+      size: Math.max(16, alignTo(bytes.byteLength, 16)),
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM
+    });
+    device.queue.writeBuffer(buffer, 0, bytes);
+    retain.push(buffer);
+    addEntry(shaderInfo.uniformBinding.group, {
+      binding: shaderInfo.uniformBinding.binding,
+      resource: { buffer }
+    });
+  }
+
+  for (const texture of shaderInfo.textures) {
+    const uploaded = createWebGpuOcioTexture(device, texture, useFloat32);
+    retain.push(uploaded.texture, uploaded.sampler);
+    addEntry(texture.texture.group, {
+      binding: texture.texture.binding,
+      resource: uploaded.texture.createView()
+    });
+    addEntry(texture.sampler.group, {
+      binding: texture.sampler.binding,
+      resource: uploaded.sampler
+    });
+  }
+
+  const bindGroups = new Map();
+  for (const [group, entries] of entriesByGroup) {
+    bindGroups.set(group, device.createBindGroup({
+      label: `OCIO resources group ${group}`,
+      layout: pipeline.getBindGroupLayout(group),
+      entries
+    }));
+  }
+  bindGroups.retain = retain;
+  return bindGroups;
+}
+
+function createWebGpuOcioTexture(device, textureInfo, useFloat32) {
+  if (textureInfo.dimensions !== 2 && textureInfo.dimensions !== 3) {
+    throw new Error(`Unsupported OCIO WebGPU texture dimension: ${textureInfo.dimensions}`);
+  }
+
+  const componentCount = textureInfo.channels === 1 ? 1 : 4;
+  const format = textureInfo.channels === 1
+    ? (useFloat32 ? 'r32float' : 'r16float')
+    : (useFloat32 ? 'rgba32float' : 'rgba16float');
+  const data = convertWebGpuTextureValues(textureInfo, useFloat32);
+  const bytesPerComponent = useFloat32 ? 4 : 2;
+  const gpuTexture = device.createTexture({
+    label: textureInfo.name,
+    size: {
+      width: textureInfo.width,
+      height: textureInfo.height,
+      depthOrArrayLayers: textureInfo.dimensions === 3 ? textureInfo.depth : 1
+    },
+    dimension: textureInfo.dimensions === 3 ? '3d' : '2d',
+    format,
+    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+  });
+  device.queue.writeTexture(
+    { texture: gpuTexture },
+    data,
+    {
+      bytesPerRow: textureInfo.width * componentCount * bytesPerComponent,
+      rowsPerImage: textureInfo.height
+    },
+    {
+      width: textureInfo.width,
+      height: textureInfo.height,
+      depthOrArrayLayers: textureInfo.dimensions === 3 ? textureInfo.depth : 1
+    }
+  );
+  const filter = textureInfo.interpolation === 'nearest' ? 'nearest' : 'linear';
+  const sampler = device.createSampler({
+    label: textureInfo.samplerName,
+    magFilter: filter,
+    minFilter: filter,
+    addressModeU: 'clamp-to-edge',
+    addressModeV: 'clamp-to-edge',
+    addressModeW: 'clamp-to-edge'
+  });
+  return { texture: gpuTexture, sampler };
+}
+
+function convertWebGpuTextureValues(textureInfo, useFloat32) {
+  const values = textureInfo.values;
+  let expanded = values;
+  if (textureInfo.channels === 3) {
+    expanded = new Float32Array((values.length / 3) * 4);
+    for (let source = 0, target = 0; source < values.length; source += 3, target += 4) {
+      expanded[target] = values[source];
+      expanded[target + 1] = values[source + 1];
+      expanded[target + 2] = values[source + 2];
+      expanded[target + 3] = 1;
+    }
+  }
+  if (useFloat32) {
+    return expanded;
+  }
+
+  const half = new Uint16Array(expanded.length);
+  for (let index = 0; index < expanded.length; index += 1) {
+    half[index] = float32ToFloat16(expanded[index]);
+  }
+  return half;
+}
+
+function float32ToFloat16(value) {
+  const floatView = new Float32Array(1);
+  const intView = new Uint32Array(floatView.buffer);
+  floatView[0] = value;
+  const bits = intView[0];
+  const sign = (bits >>> 16) & 0x8000;
+  let exponent = ((bits >>> 23) & 0xff) - 127 + 15;
+  let mantissa = bits & 0x7fffff;
+
+  if (exponent <= 0) {
+    if (exponent < -10) return sign;
+    mantissa = (mantissa | 0x800000) >>> (1 - exponent);
+    return sign | ((mantissa + 0x1000) >>> 13);
+  }
+  if (exponent >= 31) {
+    return sign | (mantissa ? 0x7e00 : 0x7c00);
+  }
+  mantissa += 0x1000;
+  if (mantissa & 0x800000) {
+    mantissa = 0;
+    exponent += 1;
+    if (exponent >= 31) return sign | 0x7c00;
+  }
+  return sign | (exponent << 10) | (mantissa >>> 13);
+}
+
+function packWebGpuUniforms(shaderInfo) {
+  const size = Math.max(0, shaderInfo.uniformBufferSize);
+  const buffer = new ArrayBuffer(size);
+  const view = new DataView(buffer);
+  const writeValues = (offset, values, integer = false) => {
+    values.forEach((value, index) => {
+      const position = offset + index * 4;
+      if (position + 4 > buffer.byteLength) return;
+      if (integer) view.setInt32(position, Number(value), true);
+      else view.setFloat32(position, Number(value), true);
+    });
+  };
+
+  for (const uniform of shaderInfo.uniforms) {
+    const values = Array.isArray(uniform.value) ? uniform.value : [uniform.value];
+    if (uniform.type === 'bool') {
+      writeValues(uniform.bufferOffset, [uniform.value ? 1 : 0], true);
+    } else if (uniform.type === 'vector_int') {
+      writeValues(uniform.bufferOffset, values, true);
+    } else {
+      writeValues(uniform.bufferOffset, values);
+    }
+  }
+  return new Uint8Array(buffer);
+}
+
+function alignTo(value, alignment) {
+  return Math.ceil(value / alignment) * alignment;
 }
 
 function compileShader(gl, type, source) {
@@ -311,6 +687,156 @@ function checkGLError(gl, label) {
   if (error !== gl.NO_ERROR) {
     throw new Error(`${label} failed with WebGL error 0x${error.toString(16)}`);
   }
+}
+
+function createCpuShaderInspection(detail = 'CPU · WASM') {
+  return {
+    path: 'cpu',
+    summary: detail,
+    source: 'CPU/WASM processing does not generate a GPU shader.',
+    generated: 'CPU/WASM processing does not generate a GPU shader.',
+    used: 'processor.applyRGBAF32(...) executes the OpenColorIO CPU processor in WebAssembly.',
+    resources: JSON.stringify({ path: 'cpu', shader: null }, null, 2)
+  };
+}
+
+function createGpuShaderInspection(path, result) {
+  const info = result.shaderInfo;
+  const isWebGpu = path === 'webgpu';
+  const resources = {
+    path,
+    language: info.language,
+    sourceLanguage: isWebGpu ? info.sourceLanguage : info.language,
+    functionName: info.functionName,
+    cacheId: info.cacheId,
+    uniformBufferSize: info.uniformBufferSize,
+    uniformBinding: info.uniformBinding ?? null,
+    textures: info.textures.map((texture) => ({
+      name: texture.name,
+      samplerName: texture.samplerName,
+      size: [texture.width, texture.height, texture.depth],
+      dimensions: texture.dimensions,
+      channels: texture.channels,
+      interpolation: texture.interpolation,
+      textureBinding: texture.texture ?? null,
+      samplerBinding: texture.sampler ?? null
+    })),
+    uniforms: info.uniforms,
+    ...(result.texturePrecision ? { texturePrecision: result.texturePrecision } : {})
+  };
+
+  return {
+    path,
+    summary: isWebGpu
+      ? `WebGPU · WGSL · ${info.textures.length} LUTs`
+      : `WebGL 2 · GLSL ES 3.0 · ${info.textures.length} LUTs`,
+    source: isWebGpu ? info.sourceShaderText : info.shaderText,
+    generated: info.shaderText,
+    used: result.usedShader,
+    resources: JSON.stringify(resources, null, 2)
+  };
+}
+
+function updateShaderInspection(inspection) {
+  shaderInspection = inspection;
+  renderShaderInspector();
+}
+
+function renderShaderInspector() {
+  const labels = {
+    cpu: {
+      used: 'CPU path',
+      generated: 'Generated shader',
+      source: 'OCIO source',
+      resources: 'Resources'
+    },
+    webgl2: {
+      used: 'Final GLSL used',
+      generated: 'OCIO GLSL',
+      source: 'OCIO GLSL source',
+      resources: 'Resources'
+    },
+    webgpu: {
+      used: 'Final WGSL used',
+      generated: 'Naga WGSL',
+      source: 'OCIO Vulkan GLSL',
+      resources: 'Resources'
+    }
+  }[shaderInspection.path];
+
+  for (const option of elements.shaderView.options) {
+    option.textContent = labels[option.value];
+  }
+  elements.shaderSummary.textContent = shaderInspection.summary;
+  elements.shaderCode.textContent = shaderInspection[elements.shaderView.value];
+}
+
+function showRendererCanvas(path) {
+  const active = path === 'webgpu'
+    ? elements.webgpuCanvas
+    : path === 'webgl2'
+      ? elements.canvas
+      : elements.cpuCanvas;
+  for (const canvas of [elements.canvas, elements.webgpuCanvas, elements.cpuCanvas]) {
+    canvas.hidden = canvas !== active;
+  }
+}
+
+async function initializeRendererSupport() {
+  const webglOption = elements.rendererPath.querySelector('option[value="webgl2"]');
+  const webgpuOption = elements.rendererPath.querySelector('option[value="webgpu"]');
+  webglOption.disabled = !webglRenderer;
+
+  if (!navigator.gpu) {
+    webgpuInitError = 'navigator.gpu is unavailable';
+    webgpuOption.disabled = true;
+    updateRendererInfo();
+    return;
+  }
+
+  try {
+    const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+    if (!adapter) {
+      throw new Error('No WebGPU adapter was returned');
+    }
+    webgpuRenderer = await createWebGPURenderer(elements.webgpuCanvas, adapter);
+    webgpuOption.disabled = false;
+  } catch (error) {
+    webgpuInitError = error instanceof Error ? error.message : String(error);
+    webgpuOption.disabled = true;
+  }
+  updateRendererInfo();
+}
+
+function updateRendererInfo() {
+  const rows = [
+    ['WebGPU · WGSL', Boolean(webgpuRenderer), webgpuInitError],
+    ['WebGL 2 · GLSL ES 3.0', Boolean(webglRenderer), webglRenderer ? '' : 'unavailable'],
+    ['CPU · WASM', true, 'always available']
+  ];
+  elements.rendererInfo.replaceChildren(...rows.map(([label, available, detail]) => {
+    const row = document.createElement('div');
+    row.className = available ? 'available' : 'unavailable';
+    const suffix = detail ? ` — ${detail}` : '';
+    row.textContent = `${available ? '✓' : '–'} ${label}${suffix}`;
+    return row;
+  }));
+}
+
+function resolveRendererPath() {
+  const requested = elements.rendererPath.value;
+  if (requested === 'auto') {
+    if (webgpuRenderer) return 'webgpu';
+    if (webglRenderer) return 'webgl2';
+    return 'cpu';
+  }
+  if (requested === 'webgpu' && !webgpuRenderer) {
+    throw new Error(`WebGPU is unavailable${webgpuInitError ? `: ${webgpuInitError}` : ''}`);
+  }
+  if (requested === 'webgl2' && !webglRenderer) {
+    throw new Error('WebGL 2 is unavailable');
+  }
+  return requested;
 }
 
 function setStatus(message, kind = '') {
@@ -349,7 +875,7 @@ async function switchConfig(newConfig) {
 
   updateViews();
   updateConfigInfo();
-  render();
+  await render();
 }
 
 function updateViews() {
@@ -418,19 +944,14 @@ function renderCpu(params) {
 
   processor.applyRGBAF32(working);
 
-  const output = cpuContext?.createImageData(width, height) ?? new ImageData(width, height);
+  const output = cpuContext.createImageData(width, height);
   for (let index = 0; index < working.length; index += 4) {
     output.data[index] = toByte(working[index]);
     output.data[index + 1] = toByte(working[index + 1]);
     output.data[index + 2] = toByte(working[index + 2]);
     output.data[index + 3] = toByte(working[index + 3]);
   }
-
-  if (webglRenderer) {
-    webglRenderer.renderBytes(output.data);
-  } else {
-    cpuContext.putImageData(output, 0, 0);
-  }
+  cpuContext.putImageData(output, 0, 0);
 }
 
 function renderStatus(renderer, detail = '') {
@@ -438,28 +959,77 @@ function renderStatus(renderer, detail = '') {
   return `${elements.source.value} through ${elements.display.value} / ${elements.view.value}${suffix}`;
 }
 
-function render() {
+async function renderWithPath(path, params, revision) {
+  if (path === 'webgpu') {
+    const result = await webgpuRenderer.renderOcio(processor, sourcePixels, params);
+    if (revision !== renderRevision) return false;
+    showRendererCanvas('webgpu');
+    updateShaderInspection(createGpuShaderInspection('webgpu', result));
+    const detail = `${result.shaderInfo.textures.length} LUT textures · ${result.texturePrecision} LUT upload`;
+    setStatus(renderStatus('WebGPU · WGSL', detail), 'ok');
+    return true;
+  }
+
+  if (path === 'webgl2') {
+    const result = webglRenderer.renderOcio(processor, sourcePixels, params);
+    if (revision !== renderRevision) return false;
+    showRendererCanvas('webgl2');
+    updateShaderInspection(createGpuShaderInspection('webgl2', result));
+    setStatus(renderStatus('WebGL 2 · GLSL ES 3.0', `${result.shaderInfo.textures.length} LUT textures`), 'ok');
+    return true;
+  }
+
+  renderCpu(params);
+  if (revision !== renderRevision) return false;
+  showRendererCanvas('cpu');
+  updateShaderInspection(createCpuShaderInspection());
+  setStatus(renderStatus('CPU · WASM'), 'ok');
+  return true;
+}
+
+async function render() {
+  const revision = ++renderRevision;
   try {
     rebuildProcessor();
     const params = readToneControls();
+    const requested = elements.rendererPath.value;
+    const primaryPath = resolveRendererPath();
 
-    if (webglRenderer) {
-      try {
-        const shaderInfo = webglRenderer.renderOcio(processor, sourcePixels, params);
-        setStatus(renderStatus('GPU', `${shaderInfo.textures.length} LUT textures`), 'ok');
-        return;
-      } catch (gpuError) {
-        renderCpu(params);
-        const message = gpuError instanceof Error ? gpuError.message.split('\n')[0] : String(gpuError);
-        setStatus(renderStatus('CPU fallback', message), 'ok');
-        return;
+    try {
+      const committed = await renderWithPath(primaryPath, params, revision);
+      if (!committed) return;
+    } catch (primaryError) {
+      if (requested !== 'auto') {
+        throw primaryError;
       }
+
+      const fallbacks = primaryPath === 'webgpu'
+        ? [webglRenderer ? 'webgl2' : null, 'cpu']
+        : ['cpu'];
+      let lastError = primaryError;
+      for (const fallback of fallbacks.filter(Boolean)) {
+        try {
+          const committed = await renderWithPath(fallback, params, revision);
+          if (!committed) return;
+          const reason = primaryError instanceof Error
+            ? primaryError.message.split('\n')[0]
+            : String(primaryError);
+          setStatus(`${renderStatus(fallback === 'webgl2' ? 'WebGL 2 fallback' : 'CPU fallback')} · ${reason}`, 'ok');
+          return;
+        } catch (fallbackError) {
+          lastError = fallbackError;
+        }
+      }
+      throw lastError;
     }
 
-    renderCpu(params);
-    setStatus(renderStatus('CPU'), 'ok');
+    if (revision !== renderRevision) {
+      return;
+    }
   } catch (error) {
-    setStatus(error instanceof Error ? error.message : String(error), 'error');
+    if (revision === renderRevision) {
+      setStatus(error instanceof Error ? error.message : String(error), 'error');
+    }
   }
 }
 
@@ -542,12 +1112,12 @@ async function loadImageFile(file) {
     elements.source.value = srgb.value;
   }
   updateViews();
-  render();
+  await render();
 }
 
 async function loadBuiltinConfig(name) {
   const newConfig = ocio.createBuiltinConfig(name);
-  elements.builtinConfig.value = name;
+  elements.builtinConfig.value = name.replace(/^ocio:\/\//, '');
   await switchConfig(newConfig);
 }
 
@@ -560,7 +1130,7 @@ async function loadBuiltinConfigs() {
     option.textContent = uiName;
     return option;
   }));
-  select.value = ACES_CG_V2_CONFIG;
+  select.value = ACES_CG_V2_CONFIG.replace(/^ocio:\/\//, '');
 }
 
 async function writeDirectoryToFs(directoryHandle, basePath) {
@@ -585,6 +1155,8 @@ async function main() {
   ocio = await createOCIO();
 
   elements.version.textContent = `OCIO ${ocio.version}`;
+  renderShaderInspector();
+  await initializeRendererSupport();
   await loadBuiltinConfigs();
   await loadBuiltinConfig(ACES_CG_V2_CONFIG);
 }
@@ -596,6 +1168,8 @@ for (const element of [elements.source, elements.display]) {
   });
 }
 
+elements.rendererPath.addEventListener('change', render);
+elements.shaderView.addEventListener('change', renderShaderInspector);
 elements.view.addEventListener('change', render);
 for (const element of [elements.exposure, elements.gain, elements.gamma]) {
   element.addEventListener('input', render);

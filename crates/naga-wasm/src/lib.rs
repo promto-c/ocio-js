@@ -13,7 +13,7 @@ fn translate_glsl_fragment(source: &str) -> Result<String, String> {
 
     let info = Validator::new(ValidationFlags::all(), Capabilities::all())
         .validate(&module)
-        .map_err(|error| format!("Naga validation failed: {error}"))?;
+        .map_err(|error| format!("Naga validation failed: {error:?}"))?;
 
     wgsl::write_string(&module, &info, wgsl::WriterFlags::empty())
         .map_err(|error| format!("Naga WGSL generation failed: {error}"))

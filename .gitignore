@@ -6,3 +6,4 @@ ocio/
 *.log
 .DS_Store
 crates/naga-wasm/target/
+demo-dist/
