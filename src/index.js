@@ -1032,6 +1032,20 @@ export class Processor {
     return this.getGpuShaderInfo(options).shaderText;
   }
 
+  async getWebGpuShaderInfo(options = {}) {
+    const shaderInfo = this.getGpuShaderInfo({
+      ...options,
+      language: 'glsl_vk_4.6',
+      allowTexture1D: false
+    });
+    const { buildWebGpuShaderInfo } = await import('./webgpu.js');
+    return buildWebGpuShaderInfo(shaderInfo);
+  }
+
+  async getWebGpuShaderText(options = {}) {
+    return (await this.getWebGpuShaderInfo(options)).shaderText;
+  }
+
   _applyFloat32(target, channels, functionName) {
     const byteLength = target.byteLength;
     const pointer = this.ocio.module._malloc(byteLength);

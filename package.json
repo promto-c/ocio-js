@@ -1,13 +1,17 @@
 {
   "name": "@bb-studio/ocio",
   "version": "0.0.7",
-  "description": "OpenColorIO 2.5 WebAssembly bindings for browser and Node.js.",
+  "description": "OpenColorIO 2.5.2 WebAssembly bindings for browser and Node.js.",
   "type": "module",
   "types": "./src/ocio-js.d.ts",
   "imports": {
     "#ocio-wasm": {
       "node": "./dist/ocio-wasm.node.js",
       "default": "./dist/ocio-wasm.js"
+    },
+    "#naga-runtime": {
+      "node": "./src/naga-runtime.node.js",
+      "default": "./src/naga-runtime.js"
     }
   },
   "exports": {
@@ -23,7 +27,9 @@
     "test": "node --test test/*.test.js",
     "pack:dry-run": "npm pack --dry-run",
     "prepublishOnly": "npm test",
-    "serve:demo": "node scripts/serve-demo.mjs"
+    "serve:demo": "node scripts/serve-demo.mjs",
+    "build:naga": "bash scripts/build-naga.sh",
+    "build": "npm run build:naga && npm run build:wasm"
   },
   "keywords": [
     "OpenColorIO",
@@ -56,8 +62,11 @@
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
-    "patches/opencolorio/0001-webgl-glsl-es-float-literals.patch",
-    "patches/opencolorio/README.md"
+    "dist/naga-wasm.js",
+    "dist/naga-wasm_bg.wasm",
+    "src/naga-runtime.js",
+    "src/naga-runtime.node.js",
+    "src/webgpu.js"
   ],
   "engines": {
     "node": ">=20"

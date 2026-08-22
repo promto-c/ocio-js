@@ -219,6 +219,7 @@ export type GpuShaderLanguage =
   | 'glsl_1.2'
   | 'glsl_1.3'
   | 'glsl_4.0'
+  | 'glsl_vk_4.6'
   | 'glsl_es_1.0'
   | 'glsl_es_3.0'
   | 'webgl'
@@ -259,6 +260,32 @@ export interface GpuShaderInfo {
   cacheId: string;
   uniformBufferSize: number;
   textures: OcioGpuTexture[];
+  uniforms: OcioGpuUniform[];
+}
+
+
+export interface WebGpuBinding {
+  group: number;
+  binding: number;
+}
+
+export interface WebGpuShaderOptions
+  extends Omit<GpuShaderOptions, 'language' | 'allowTexture1D'> {}
+
+export interface OcioWebGpuTexture extends OcioGpuTexture {
+  texture: WebGpuBinding;
+  sampler: WebGpuBinding;
+}
+
+export interface WebGpuShaderInfo {
+  shaderText: string;
+  functionName: string;
+  language: 'wgsl';
+  sourceLanguage: 'glsl_vk_4.6';
+  cacheId: string;
+  uniformBufferSize: number;
+  uniformBinding: WebGpuBinding | null;
+  textures: OcioWebGpuTexture[];
   uniforms: OcioGpuUniform[];
 }
 
@@ -331,4 +358,6 @@ export class Processor {
   applyRGBA8(rgba: Uint8Array | Uint8ClampedArray, options?: { copy?: boolean }): Uint8Array | Uint8ClampedArray;
   getGpuShaderInfo(options?: GpuShaderOptions): GpuShaderInfo;
   getGpuShaderText(options?: GpuShaderOptions): string;
+  getWebGpuShaderInfo(options?: WebGpuShaderOptions): Promise<WebGpuShaderInfo>;
+  getWebGpuShaderText(options?: WebGpuShaderOptions): Promise<string>;
 }

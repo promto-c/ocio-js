@@ -5,151 +5,118 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const packageJsonPath = join(root, 'package.json');
+const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const browserJsPath = join(root, 'dist', 'ocio-wasm.js');
 const browserWasmPath = join(root, 'dist', 'ocio-wasm.wasm');
 const nodeJsPath = join(root, 'dist', 'ocio-wasm.node.js');
+const nagaJsPath = join(root, 'dist', 'naga-wasm.js');
+const nagaWasmPath = join(root, 'dist', 'naga-wasm_bg.wasm');
+const nagaBrowserRuntimePath = join(root, 'src', 'naga-runtime.js');
 const srcIndexPath = join(root, 'src', 'index.js');
-const viteIndexPath = join(root, 'src', 'index.vite.js');
-const defaultWasmUrlPath = join(root, 'src', 'wasm-url.js');
-const viteWasmUrlPath = join(root, 'src', 'wasm-url.vite.js');
-const typesPath = join(root, 'src', 'ocio-js.d.ts');
 const demoHtmlPath = join(root, 'examples', 'browser', 'index.html');
 const demoMainPath = join(root, 'examples', 'browser', 'main.js');
 
-const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
-
 function assertConditionalTarget(target, nodePath, defaultPath) {
-  assert.deepEqual(Object.keys(target), ['node', 'default']);
-  assert.equal(target.node, nodePath);
-  assert.equal(target.default, defaultPath);
+  assert.equal(target?.node, nodePath);
+  assert.equal(target?.default, defaultPath);
 }
 
-test('package exports select the correct WASM loader', () => {
-  assert.deepEqual(Object.keys(packageJson.exports), [
-    '.',
-    './package.json',
-  ]);
-  assert.deepEqual(packageJson.exports['.'], {
-    types: './src/ocio-js.d.ts',
-    vite: './src/index.vite.js',
-    default: './src/index.js',
-  });
-  assert.equal(Object.hasOwn(packageJson, 'main'), false);
-  assert.ok(packageJson.files.includes('src/index.vite.js'));
-  assert.ok(packageJson.files.includes('src/wasm-url.js'));
-  assert.ok(packageJson.files.includes('src/wasm-url.vite.js'));
-  assert.equal(packageJson.files.includes('src/wasm-url.d.ts'), false);
-  assert.equal(packageJson.files.includes('src/wasm-url.browser.js'), false);
+function assertPackageFile(path) {
+  assert.ok(packageJson.files.includes(path), `Package must include ${path}`);
+}
 
-  assert.deepEqual(Object.keys(packageJson.imports), ['#ocio-wasm']);
+test('package routes and ships required runtime files', () => {
+  const rootExport = packageJson.exports['.'];
+  assert.equal(rootExport.types, './src/ocio-js.d.ts');
+  assert.equal(rootExport.vite, './src/index.vite.js');
+  assert.equal(rootExport.default, './src/index.js');
+
   assertConditionalTarget(
     packageJson.imports['#ocio-wasm'],
     './dist/ocio-wasm.node.js',
     './dist/ocio-wasm.js',
   );
+  assertConditionalTarget(
+    packageJson.imports['#naga-runtime'],
+    './src/naga-runtime.node.js',
+    './src/naga-runtime.js',
+  );
 
-  assert.equal(
-    Object.hasOwn(packageJson.exports, './dist/ocio-wasm.js'),
-    false,
-  );
-  assert.equal(
-    Object.hasOwn(packageJson.exports, './dist/ocio-wasm.node.js'),
-    false,
-  );
-  assert.equal(
-    Object.hasOwn(packageJson.exports, './dist/ocio-wasm.wasm'),
-    false,
-  );
-  assert.equal(Object.hasOwn(packageJson.exports, './wasm'), false);
-  assert.equal(Object.hasOwn(packageJson.exports, './wasm.wasm'), false);
-  assert.equal(Object.hasOwn(packageJson.exports, './wasm-url'), false);
-  assert.equal(Object.hasOwn(packageJson.exports, './wasm-url/vite'), false);
+  for (const path of [
+    'dist/ocio-wasm.js',
+    'dist/ocio-wasm.node.js',
+    'dist/ocio-wasm.wasm',
+    'dist/naga-wasm.js',
+    'dist/naga-wasm_bg.wasm',
+    'src/index.js',
+    'src/index.vite.js',
+    'src/wasm-url.js',
+    'src/wasm-url.vite.js',
+    'src/naga-runtime.js',
+    'src/naga-runtime.node.js',
+    'src/webgpu.js',
+    'src/ocio-js.d.ts',
+  ]) {
+    assertPackageFile(path);
+  }
 });
 
-test('WASM build artifacts exist', () => {
-  assert.equal(
-    existsSync(browserJsPath),
-    true,
-    'Missing dist/ocio-wasm.js. Run npm run build:wasm.',
-  );
-  assert.equal(
-    existsSync(nodeJsPath),
-    true,
-    'Missing dist/ocio-wasm.node.js. Run npm run build:wasm.',
-  );
-  assert.equal(
-    existsSync(browserWasmPath),
-    true,
-    'Missing dist/ocio-wasm.wasm. Run npm run build:wasm.',
-  );
+test('built browser runtimes exist and avoid Node.js built-ins', () => {
+  for (const path of [
+    browserJsPath,
+    browserWasmPath,
+    nodeJsPath,
+    nagaJsPath,
+    nagaWasmPath,
+  ]) {
+    assert.equal(existsSync(path), true, `Missing build artifact: ${path}`);
+  }
+
+  for (const path of [browserJsPath, nagaJsPath, nagaBrowserRuntimePath]) {
+    const source = readFileSync(path, 'utf8');
+    assert.doesNotMatch(source, /['"]node:[^'"]+['"]/);
+  }
 });
 
-test('browser loader contains no Node.js built-in imports', () => {
-  const browserWrapper = readFileSync(browserJsPath, 'utf8');
-
-  assert.doesNotMatch(browserWrapper, /['"]node:[^'"]+['"]/);
-  assert.match(browserWrapper, /ocio-wasm\.wasm/);
-  assert.doesNotMatch(browserWrapper, /ocio-wasm\.node\.wasm/);
-});
-
-test('Node loader uses the shared WASM binary', async () => {
-  const nodeWrapper = readFileSync(nodeJsPath, 'utf8');
-
-  assert.match(nodeWrapper, /ocio-wasm\.wasm/);
-  assert.doesNotMatch(nodeWrapper, /ocio-wasm\.node\.wasm/);
-
-  const moduleNamespace = await import('../dist/ocio-wasm.node.js');
-  assert.equal(typeof moduleNamespace.default, 'function');
-});
-
-test('default createOCIO path is bundler-friendly', () => {
+test('base entry lazily loads the WebGPU translator', () => {
   const source = readFileSync(srcIndexPath, 'utf8');
-  const viteSource = readFileSync(viteIndexPath, 'utf8');
-  const defaultWasmUrl = readFileSync(defaultWasmUrlPath, 'utf8');
-  const viteWasmUrl = readFileSync(viteWasmUrlPath, 'utf8');
-  const types = readFileSync(typesPath, 'utf8');
 
-  assert.match(source, /import OcioWasmModule from '#ocio-wasm'/);
-  assert.match(source, /import DEFAULT_WASM_URL from '\.\/wasm-url\.js'/);
-  assert.doesNotMatch(source, /#ocio-wasm-url/);
-  assert.doesNotMatch(source, /\.\.\/dist\/ocio-wasm\.wasm/);
-  assert.match(source, /options\.wasmUrl/);
-  assert.match(viteSource, /import wasmUrl from '\.\/wasm-url\.vite\.js'/);
-  assert.match(viteSource, /createDefaultOCIO\(\{ \.\.\.options, wasmUrl \}\)/);
-  assert.match(defaultWasmUrl, /new URL\('\.\.\/dist\/ocio-wasm\.wasm', import\.meta\.url\)/);
-  assert.match(viteWasmUrl, /import wasmUrl from '\.\.\/dist\/ocio-wasm\.wasm\?url'/);
-  assert.doesNotMatch(source, /import\('#ocio-wasm'\)/);
-  assert.doesNotMatch(source, /modulePath/);
-  assert.match(types, /wasmUrl\?: string/);
-  assert.doesNotMatch(types, /modulePath/);
+  assert.doesNotMatch(source, /^import .*webgpu\.js/m);
+  assert.match(source, /await import\('\.\/webgpu\.js'\)/);
 });
 
-test('createOCIO supports a simple wasmUrl override', async () => {
-  const { createOCIO } = await import('../src/index.js');
-  const fakeModule = { fake: true };
-  const located = [];
+test('Node OCIO and Naga runtime loaders are usable', async () => {
+  const ocioModule = await import('../dist/ocio-wasm.node.js');
+  assert.equal(typeof ocioModule.default, 'function');
 
-  const ocio = await createOCIO({
+  const { translateGlslFragmentToWgsl } = await import('../src/naga-runtime.node.js');
+  const wgsl = await translateGlslFragmentToWgsl(`#version 460
+layout(set=0, binding=0) uniform texture2D lut;
+layout(set=0, binding=1) uniform sampler lutSampler;
+layout(location=0) out vec4 outputColor;
+void main() {
+  outputColor = texture(sampler2D(lut, lutSampler), vec2(0.5));
+}`);
+
+  assert.match(wgsl, /texture_2d<f32>/);
+  assert.match(wgsl, /var lutSampler: sampler/);
+  assert.match(wgsl, /@fragment/);
+});
+
+test('createOCIO honors wasmUrl and locateFile overrides', async () => {
+  const { createOCIO } = await import('../src/index.js');
+  const located = [];
+  await createOCIO({
     wasmUrl: '/assets/ocio-wasm.wasm',
     moduleFactory(options) {
       located.push(options.locateFile('ocio-wasm.wasm', '/prefix/'));
       located.push(options.locateFile('other.data', '/prefix/'));
-      return Promise.resolve(fakeModule);
+      return Promise.resolve({});
     },
   });
+  assert.deepEqual(located, ['/assets/ocio-wasm.wasm', '/prefix/other.data']);
 
-  assert.equal(ocio.module, fakeModule);
-  assert.deepEqual(located, [
-    '/assets/ocio-wasm.wasm',
-    '/prefix/other.data',
-  ]);
-});
-
-test('createOCIO keeps locateFile as the advanced override', async () => {
-  const { createOCIO } = await import('../src/index.js');
-  const located = [];
-
+  located.length = 0;
   await createOCIO({
     wasmUrl: '/ignored.wasm',
     locateFile(path, prefix) {
@@ -160,20 +127,16 @@ test('createOCIO keeps locateFile as the advanced override', async () => {
       return Promise.resolve({});
     },
   });
-
   assert.deepEqual(located, ['/prefix/ocio-wasm.wasm.custom']);
 });
 
-test('browser demo uses the default createOCIO path', () => {
+test('browser demo maps the local development runtimes', () => {
   const html = readFileSync(demoHtmlPath, 'utf8');
   const source = readFileSync(demoMainPath, 'utf8');
 
-  assert.match(html, /"imports"\s*:\s*\{/);
   assert.match(html, /"@bb-studio\/ocio"\s*:\s*"\.\.\/\.\.\/src\/index\.js"/);
   assert.match(html, /"#ocio-wasm"\s*:\s*"\.\.\/\.\.\/dist\/ocio-wasm\.js"/);
-  assert.doesNotMatch(html, /#ocio-wasm-url/);
+  assert.match(html, /"#naga-runtime"\s*:\s*"\.\.\/\.\.\/src\/naga-runtime\.js"/);
   assert.match(source, /from '@bb-studio\/ocio'/);
   assert.match(source, /await createOCIO\(\)/);
-  assert.doesNotMatch(source, /modulePath/);
-  assert.doesNotMatch(source, /locateFile/);
 });

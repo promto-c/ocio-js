@@ -5,3 +5,4 @@ ocio/
 *.tgz
 *.log
 .DS_Store
+crates/naga-wasm/target/

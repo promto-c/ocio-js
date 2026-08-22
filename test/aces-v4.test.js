@@ -10,7 +10,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const wasmJsPath = join(root, 'dist', 'ocio-wasm.node.js');
 const wasmPath = join(root, 'dist', 'ocio-wasm.wasm');
 
-test('OpenColorIO 2.5 wasm loads the ACES v4 built-in CG config', async (t) => {
+test('OpenColorIO 2.5.2 wasm loads the ACES v4 built-in CG config', async (t) => {
   if (!existsSync(wasmJsPath) || !existsSync(wasmPath)) {
     t.skip('dist/ocio-wasm.node.js and dist/ocio-wasm.wasm are missing. Run npm run build:wasm first.');
     return;
@@ -18,7 +18,7 @@ test('OpenColorIO 2.5 wasm loads the ACES v4 built-in CG config', async (t) => {
 
   const ocio = await createOCIO();
 
-  assert.match(ocio.version, /^2\.5\./);
+  assert.equal(ocio.version, '2.5.2');
 
   const builtins = ocio.listBuiltinConfigs();
   assert.ok(
@@ -81,6 +81,19 @@ test('OpenColorIO 2.5 wasm loads the ACES v4 built-in CG config', async (t) => {
     assert.ok(texture.depth > 0);
     assert.ok(texture.values instanceof Float32Array);
     assert.equal(texture.values.length, texture.width * texture.height * texture.depth * texture.channels);
+  }
+
+  const webGpuShaderInfo = await processor.getWebGpuShaderInfo({
+    functionName: 'OCIODisplay',
+    resourcePrefix: 'ocio_webgpu'
+  });
+  assert.equal(webGpuShaderInfo.language, 'wgsl');
+  assert.equal(webGpuShaderInfo.sourceLanguage, 'glsl_vk_4.6');
+  assert.match(webGpuShaderInfo.shaderText, /fn OCIODisplay/);
+  assert.match(webGpuShaderInfo.shaderText, /@fragment/);
+  for (const texture of webGpuShaderInfo.textures) {
+    assert.ok(texture.texture);
+    assert.ok(texture.sampler);
   }
 
   const gamutProcessor = config.createColorSpaceProcessor('ACEScg', 'ACES2065-1');

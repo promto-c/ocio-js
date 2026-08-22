@@ -1,0 +1,12 @@
+[package]
+name = "ocio-js-naga"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+naga = { version = "=29.0.0", default-features = false, features = ["glsl-in", "wgsl-out"] }
+wasm-bindgen = "0.2.127"
