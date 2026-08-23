@@ -1,6 +1,6 @@
 {
   "name": "@bb-studio/ocio",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "OpenColorIO 2.5.2 WebAssembly bindings with CPU, GPU shader extraction, and WebGPU/WGSL support.",
   "type": "module",
   "types": "./src/ocio-js.d.ts",
