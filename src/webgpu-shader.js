@@ -105,13 +105,34 @@ export function normalizeOcioVulkanGlsl(shaderInfo) {
   return { source, uniformBinding, textureBindings: bindings };
 }
 
+export function resolveTranslatedWgslFunctionName(shaderText, sourceFunctionName) {
+  const functionNames = Array.from(
+    shaderText.matchAll(/\bfn\s+([A-Za-z_]\w*)\s*\(/g),
+    (match) => match[1]
+  );
+  if (functionNames.includes(sourceFunctionName)) {
+    return sourceFunctionName;
+  }
+
+  const renamedCandidates = functionNames.filter((name) => name.startsWith(`${sourceFunctionName}_`));
+  if (renamedCandidates.length === 1) {
+    return renamedCandidates[0];
+  }
+
+  throw new Error(
+    `OCIO WebGPU translation could not resolve callable function ${sourceFunctionName}; `
+    + `translated WGSL functions: ${functionNames.join(', ') || '(none)'}`
+  );
+}
+
 export async function buildWebGpuShaderInfo(shaderInfo) {
   const normalized = normalizeOcioVulkanGlsl(shaderInfo);
   const shaderText = await translateGlslFragmentToWgsl(normalized.source);
+  const functionName = resolveTranslatedWgslFunctionName(shaderText, shaderInfo.functionName);
   return {
     shaderText,
     sourceShaderText: shaderInfo.shaderText,
-    functionName: shaderInfo.functionName,
+    functionName,
     language: 'wgsl',
     sourceLanguage: shaderInfo.language,
     cacheId: shaderInfo.cacheId,

@@ -7,7 +7,10 @@ import {
   getOcioWebGpuRequiredFeatures,
   packOcioWebGpuUniforms,
 } from '@bb-studio/ocio/webgpu';
-import { normalizeOcioVulkanGlsl } from '../src/webgpu-shader.js';
+import {
+  buildWebGpuShaderInfo,
+  normalizeOcioVulkanGlsl,
+} from '../src/webgpu-shader.js';
 
 function createShaderInfo(overrides = {}) {
   return {
@@ -48,6 +51,24 @@ vec4 OCIODisplay(vec4 color) {
     sampler: { group: 0, binding: 6 },
   });
   assert.match(normalized.source, /layout\(set=0, binding=6\) uniform sampler ocio_lutSampler;/);
+});
+
+
+test('WebGPU shader metadata follows Naga-renamed callable functions', async () => {
+  const functionName = 'OCIODisplay9';
+  const shaderInfo = await buildWebGpuShaderInfo({
+    shaderText: `#version 460
+vec4 ${functionName}(vec4 color) { return color; }`,
+    functionName,
+    language: 'glsl_vk_4.6',
+    cacheId: 'digit-ending-function',
+    uniformBufferSize: 0,
+    textures: [],
+    uniforms: [],
+  });
+
+  assert.equal(shaderInfo.functionName, 'OCIODisplay9_');
+  assert.match(shaderInfo.shaderText, /fn OCIODisplay9_\(/);
 });
 
 test('WebGPU helpers expose required features and the next free bind group', () => {
