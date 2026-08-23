@@ -14,6 +14,8 @@ const nagaWasmPath = join(root, 'dist', 'naga-wasm_bg.wasm');
 const nagaBrowserRuntimePath = join(root, 'src', 'naga-runtime.js');
 const webGpuRuntimePath = join(root, 'src', 'webgpu.js');
 const webGpuShaderPath = join(root, 'src', 'webgpu-shader.js');
+const webGpuShaderVitePath = join(root, 'src', 'webgpu-shader.vite.js');
+const webGpuShaderLoaderPath = join(root, 'src', 'webgpu-shader-loader.js');
 const srcIndexPath = join(root, 'src', 'index.js');
 const demoHtmlPath = join(root, 'examples', 'browser', 'index.html');
 const demoMainPath = join(root, 'examples', 'browser', 'main.js');
@@ -47,6 +49,10 @@ test('package routes and ships required runtime files', () => {
     './src/naga-runtime.node.js',
     './src/naga-runtime.js',
   );
+  assert.equal(
+    packageJson.imports['#naga-runtime'].vite,
+    './src/naga-runtime.vite.js',
+  );
 
   for (const path of [
     'dist/ocio-wasm.js',
@@ -60,7 +66,11 @@ test('package routes and ships required runtime files', () => {
     'src/wasm-url.vite.js',
     'src/naga-runtime.js',
     'src/naga-runtime.node.js',
+    'src/naga-runtime.vite.js',
     'src/webgpu.js',
+    'src/webgpu-shader-core.js',
+    'src/webgpu-shader-loader.js',
+    'src/webgpu-shader.vite.js',
     'src/webgpu-shader.js',
     'src/webgpu.d.ts',
     'src/ocio-js.d.ts',
@@ -80,7 +90,15 @@ test('built browser runtimes exist and avoid Node.js built-ins', () => {
     assert.equal(existsSync(path), true, `Missing build artifact: ${path}`);
   }
 
-  for (const path of [browserJsPath, nagaJsPath, nagaBrowserRuntimePath, webGpuRuntimePath, webGpuShaderPath]) {
+  for (const path of [
+    browserJsPath,
+    nagaJsPath,
+    nagaBrowserRuntimePath,
+    webGpuRuntimePath,
+    webGpuShaderPath,
+    webGpuShaderVitePath,
+    webGpuShaderLoaderPath,
+  ]) {
     const source = readFileSync(path, 'utf8');
     assert.doesNotMatch(source, /['"]node:[^'"]+['"]/);
   }
@@ -88,9 +106,20 @@ test('built browser runtimes exist and avoid Node.js built-ins', () => {
 
 test('base entry lazily loads the WebGPU translator', () => {
   const source = readFileSync(srcIndexPath, 'utf8');
+  const loader = readFileSync(webGpuShaderLoaderPath, 'utf8');
 
   assert.doesNotMatch(source, /^import .*webgpu\.js/m);
-  assert.match(source, /await import\('\.\/webgpu-shader\.js'\)/);
+  assert.match(source, /await loadWebGpuShaderBuilder\(\)/);
+  assert.match(loader, /import\('\.\/webgpu-shader\.js'\)/);
+});
+
+test('Vite entry selects the Vite-safe Naga shader builder', () => {
+  const source = readFileSync(join(root, 'src', 'index.vite.js'), 'utf8');
+  const shaderSource = readFileSync(webGpuShaderVitePath, 'utf8');
+
+  assert.match(source, /configureWebGpuShaderBuilderLoader/);
+  assert.match(source, /import\('\.\/webgpu-shader\.vite\.js'\)/);
+  assert.match(shaderSource, /from '\.\/naga-runtime\.vite\.js'/);
 });
 
 test('Node OCIO and Naga runtime loaders are usable', async () => {

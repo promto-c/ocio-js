@@ -1,3 +1,4 @@
+import { loadWebGpuShaderBuilder } from './webgpu-shader-loader.js';
 import OcioWasmModule from '#ocio-wasm';
 import DEFAULT_WASM_URL from './wasm-url.js';
 
@@ -1038,7 +1039,7 @@ export class Processor {
       language: 'glsl_vk_4.6',
       allowTexture1D: false
     });
-    const { buildWebGpuShaderInfo } = await import('./webgpu-shader.js');
+    const { buildWebGpuShaderInfo } = await loadWebGpuShaderBuilder();
     return buildWebGpuShaderInfo(shaderInfo);
   }
 

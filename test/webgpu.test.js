@@ -51,15 +51,16 @@ vec4 OCIODisplay(vec4 color) {
     sampler: { group: 0, binding: 6 },
   });
   assert.match(normalized.source, /layout\(set=0, binding=6\) uniform sampler ocio_lutSampler;/);
+  assert.match(normalized.source, /textureLod\(sampler2D\(ocio_lut, ocio_lutSampler\), color\.xy, 0\.0\)/);
 });
 
 
-test('WebGPU shader metadata follows Naga-renamed callable functions', async () => {
-  const functionName = 'OCIODisplay9';
+test('WebGPU shader metadata exposes a stable callable wrapper', async () => {
+  const sourceFunctionName = 'OCIODisplay9';
   const shaderInfo = await buildWebGpuShaderInfo({
     shaderText: `#version 460
-vec4 ${functionName}(vec4 color) { return color; }`,
-    functionName,
+vec4 ${sourceFunctionName}(vec4 color) { return color; }`,
+    functionName: sourceFunctionName,
     language: 'glsl_vk_4.6',
     cacheId: 'digit-ending-function',
     uniformBufferSize: 0,
@@ -67,8 +68,9 @@ vec4 ${functionName}(vec4 color) { return color; }`,
     uniforms: [],
   });
 
-  assert.equal(shaderInfo.functionName, 'OCIODisplay9_');
+  assert.equal(shaderInfo.functionName, 'ocio_js_webgpu_transform');
   assert.match(shaderInfo.shaderText, /fn OCIODisplay9_\(/);
+  assert.match(shaderInfo.shaderText, /fn ocio_js_webgpu_transform\(/);
 });
 
 test('WebGPU helpers expose required features and the next free bind group', () => {

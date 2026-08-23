@@ -89,9 +89,12 @@ test('OpenColorIO 2.5.2 wasm loads the ACES v4 built-in CG config', async (t) =>
   });
   assert.equal(webGpuShaderInfo.language, 'wgsl');
   assert.equal(webGpuShaderInfo.sourceLanguage, 'glsl_vk_4.6');
+  assert.equal(webGpuShaderInfo.functionName, 'ocio_js_webgpu_transform');
   assert.match(webGpuShaderInfo.sourceShaderText, /OCIODisplay/);
   assert.match(webGpuShaderInfo.shaderText, /fn OCIODisplay/);
   assert.match(webGpuShaderInfo.shaderText, /@fragment/);
+  assert.match(webGpuShaderInfo.shaderText, /textureSampleLevel\(/);
+  assert.doesNotMatch(webGpuShaderInfo.shaderText, /\btextureSample\(/);
   for (const texture of webGpuShaderInfo.textures) {
     assert.ok(texture.texture);
     assert.ok(texture.sampler);

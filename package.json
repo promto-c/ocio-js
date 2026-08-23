@@ -11,6 +11,7 @@
     },
     "#naga-runtime": {
       "node": "./src/naga-runtime.node.js",
+      "vite": "./src/naga-runtime.vite.js",
       "default": "./src/naga-runtime.js"
     }
   },
@@ -74,7 +75,11 @@
     "dist/naga-wasm_bg.wasm",
     "src/naga-runtime.js",
     "src/naga-runtime.node.js",
+    "src/naga-runtime.vite.js",
     "src/webgpu.js",
+    "src/webgpu-shader-core.js",
+    "src/webgpu-shader-loader.js",
+    "src/webgpu-shader.vite.js",
     "src/webgpu-shader.js",
     "src/webgpu.d.ts"
   ],
