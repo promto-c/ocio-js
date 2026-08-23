@@ -172,6 +172,26 @@ test('file, look, named, and group transforms expose CPU and GPU processors', as
       assert.match(shaderInfo.shaderText, /OCIOFileTransform/);
       assert.ok(shaderInfo.textures.length > 0);
       assert.ok(shaderInfo.textures.every((texture) => texture.values instanceof Float32Array));
+
+
+      const webGpuProcessors = [
+        ['File', fileProcessor],
+        ['Look', lookProcessor],
+        ['Named', namedProcessor],
+        ['Group', groupProcessor],
+        ['ColorSpace', colorSpaceGroupProcessor],
+        ['Display', displayProcessor],
+      ];
+      for (const [name, processor] of webGpuProcessors) {
+        const webGpuInfo = await processor.getWebGpuShaderInfo({
+          functionName: `OCIO${name}`,
+          resourcePrefix: `ocio_${name.toLowerCase()}`,
+        });
+        assert.equal(webGpuInfo.language, 'wgsl');
+        assert.equal(webGpuInfo.sourceLanguage, 'glsl_vk_4.6');
+        assert.match(webGpuInfo.shaderText, new RegExp(`fn OCIO${name}`));
+        assert.ok(webGpuInfo.textures.every((texture) => texture.texture && texture.sampler));
+      }
     } finally {
       fileProcessor.dispose();
       lookProcessor.dispose();

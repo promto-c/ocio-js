@@ -1038,7 +1038,7 @@ export class Processor {
       language: 'glsl_vk_4.6',
       allowTexture1D: false
     });
-    const { buildWebGpuShaderInfo } = await import('./webgpu.js');
+    const { buildWebGpuShaderInfo } = await import('./webgpu-shader.js');
     return buildWebGpuShaderInfo(shaderInfo);
   }
 

@@ -9,6 +9,7 @@ const runtimeFiles = [
   'src/index.js',
   'src/wasm-url.js',
   'src/webgpu.js',
+  'src/webgpu-shader.js',
   'src/naga-runtime.js',
   'dist/ocio-wasm.js',
   'dist/ocio-wasm.wasm',

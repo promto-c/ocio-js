@@ -12,6 +12,8 @@ const nodeJsPath = join(root, 'dist', 'ocio-wasm.node.js');
 const nagaJsPath = join(root, 'dist', 'naga-wasm.js');
 const nagaWasmPath = join(root, 'dist', 'naga-wasm_bg.wasm');
 const nagaBrowserRuntimePath = join(root, 'src', 'naga-runtime.js');
+const webGpuRuntimePath = join(root, 'src', 'webgpu.js');
+const webGpuShaderPath = join(root, 'src', 'webgpu-shader.js');
 const srcIndexPath = join(root, 'src', 'index.js');
 const demoHtmlPath = join(root, 'examples', 'browser', 'index.html');
 const demoMainPath = join(root, 'examples', 'browser', 'main.js');
@@ -30,6 +32,10 @@ test('package routes and ships required runtime files', () => {
   assert.equal(rootExport.types, './src/ocio-js.d.ts');
   assert.equal(rootExport.vite, './src/index.vite.js');
   assert.equal(rootExport.default, './src/index.js');
+
+  const webGpuExport = packageJson.exports['./webgpu'];
+  assert.equal(webGpuExport.types, './src/webgpu.d.ts');
+  assert.equal(webGpuExport.default, './src/webgpu.js');
 
   assertConditionalTarget(
     packageJson.imports['#ocio-wasm'],
@@ -55,6 +61,8 @@ test('package routes and ships required runtime files', () => {
     'src/naga-runtime.js',
     'src/naga-runtime.node.js',
     'src/webgpu.js',
+    'src/webgpu-shader.js',
+    'src/webgpu.d.ts',
     'src/ocio-js.d.ts',
   ]) {
     assertPackageFile(path);
@@ -72,7 +80,7 @@ test('built browser runtimes exist and avoid Node.js built-ins', () => {
     assert.equal(existsSync(path), true, `Missing build artifact: ${path}`);
   }
 
-  for (const path of [browserJsPath, nagaJsPath, nagaBrowserRuntimePath]) {
+  for (const path of [browserJsPath, nagaJsPath, nagaBrowserRuntimePath, webGpuRuntimePath, webGpuShaderPath]) {
     const source = readFileSync(path, 'utf8');
     assert.doesNotMatch(source, /['"]node:[^'"]+['"]/);
   }
@@ -82,7 +90,7 @@ test('base entry lazily loads the WebGPU translator', () => {
   const source = readFileSync(srcIndexPath, 'utf8');
 
   assert.doesNotMatch(source, /^import .*webgpu\.js/m);
-  assert.match(source, /await import\('\.\/webgpu\.js'\)/);
+  assert.match(source, /await import\('\.\/webgpu-shader\.js'\)/);
 });
 
 test('Node OCIO and Naga runtime loaders are usable', async () => {
@@ -135,8 +143,11 @@ test('browser demo maps the local development runtimes', () => {
   const source = readFileSync(demoMainPath, 'utf8');
 
   assert.match(html, /"@bb-studio\/ocio"\s*:\s*"\.\.\/\.\.\/src\/index\.js"/);
+  assert.match(html, /"@bb-studio\/ocio\/webgpu"\s*:\s*"\.\.\/\.\.\/src\/webgpu\.js"/);
   assert.match(html, /"#ocio-wasm"\s*:\s*"\.\.\/\.\.\/dist\/ocio-wasm\.js"/);
   assert.match(html, /"#naga-runtime"\s*:\s*"\.\.\/\.\.\/src\/naga-runtime\.js"/);
   assert.match(source, /from '@bb-studio\/ocio'/);
+  assert.match(source, /from '@bb-studio\/ocio\/webgpu'/);
+  assert.match(source, /createOcioWebGpuResources/);
   assert.match(source, /await createOCIO\(\)/);
 });

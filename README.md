@@ -200,6 +200,93 @@ Paths used by `FileTransform` are resolved by OpenColorIO against the config con
 directory. In browsers, copy files into the Emscripten filesystem with `writeFile()` before
 creating the processor.
 
+## WebGPU / WGSL
+
+Every OCIO `Processor` can produce WGSL for WebGPU. The package asks OpenColorIO for Vulkan GLSL (`glsl_vk_4.6`) and translates that shader to WGSL through the bundled Naga WebAssembly runtime:
+
+```js
+const shaderInfo = await processor.getWebGpuShaderInfo({
+  functionName: 'OCIODisplay',
+  resourcePrefix: 'ocio_display'
+});
+
+console.log(shaderInfo.shaderText);       // WGSL module source
+console.log(shaderInfo.functionName);     // callable OCIO function in that module
+console.log(shaderInfo.textures);         // LUT data + texture/sampler bindings
+console.log(shaderInfo.uniforms);         // OCIO uniform values + byte offsets
+console.log(shaderInfo.uniformBinding);   // uniform-buffer bind location, when present
+```
+
+`shaderInfo.functionName` is intended to be called from your own shader entry point. `ocio-js` does not own your render pipeline, canvas, source texture, or frame loop. For example, a viewer fragment shader may append to the returned WGSL and call the OCIO function. The group number below is illustrative; use `getOcioWebGpuNextBindGroupIndex()` when composing real resources:
+
+```wgsl
+@group(1) @binding(0) var viewer_source: texture_2d<f32>;
+
+@fragment
+fn viewer_fragment(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+  let color = textureLoad(viewer_source, vec2<i32>(position.xy), 0);
+  return OCIODisplay(color);
+}
+```
+
+The optional `@bb-studio/ocio/webgpu` entry point contains resource helpers for the binding metadata returned above:
+
+```js
+import {
+  createOcioWebGpuResources,
+  getOcioWebGpuNextBindGroupIndex,
+  getOcioWebGpuRequiredFeatures
+} from '@bb-studio/ocio/webgpu';
+
+const shaderInfo = await processor.getWebGpuShaderInfo({
+  functionName: 'OCIODisplay',
+  resourcePrefix: 'ocio_display'
+});
+
+const adapter = await navigator.gpu.requestAdapter();
+if (!adapter) throw new Error('WebGPU adapter unavailable');
+
+const requiredFeatures = getOcioWebGpuRequiredFeatures(shaderInfo);
+for (const feature of requiredFeatures) {
+  if (!adapter.features.has(feature)) {
+    throw new Error(`Required WebGPU feature is unavailable: ${feature}`);
+  }
+}
+const device = await adapter.requestDevice({ requiredFeatures });
+
+const viewerGroup = getOcioWebGpuNextBindGroupIndex(shaderInfo);
+// Build your shader module and render pipeline here. Place application-owned
+// bindings such as the source image in viewerGroup or later groups.
+
+const resources = createOcioWebGpuResources(device, pipeline, shaderInfo);
+for (const [group, bindGroup] of resources.bindGroups) {
+  pass.setBindGroup(group, bindGroup);
+}
+
+// When the cached processor/pipeline resources are retired:
+resources.dispose();
+```
+
+### LUT precision
+
+OCIO LUT values are exposed as `Float32Array`. `createOcioWebGpuResources()` therefore defaults to float32 GPU textures and never silently lowers precision. If the shader uses filtered LUT sampling, query `getOcioWebGpuRequiredFeatures()` before device creation; it will request `float32-filterable` when needed.
+
+A caller may explicitly choose half-float LUT storage when that tradeoff is acceptable:
+
+```js
+const resources = createOcioWebGpuResources(device, pipeline, shaderInfo, {
+  texturePrecision: 'float16'
+});
+```
+
+This opt-in removes the `float32-filterable` requirement for filtered LUTs but intentionally reduces LUT storage precision.
+
+### Caching and loading
+
+`shaderInfo.cacheId` is suitable for application-side shader/pipeline resource caches. Reuse the returned OCIO bind groups while that processor shader is active rather than re-uploading LUTs every frame.
+
+The Naga translator is loaded lazily. Applications using only CPU processing or GLSL extraction do not initialize the additional Naga WebAssembly runtime.
+
 ## Build From Source
 
 This checkout expects a local OpenColorIO 2.5.2 checkout and Emscripten. By default the build script uses:

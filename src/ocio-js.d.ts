@@ -269,22 +269,29 @@ export interface WebGpuBinding {
   binding: number;
 }
 
+/** Options for WebGPU shader extraction. WGSL is generated through OCIO Vulkan GLSL + Naga. */
 export interface WebGpuShaderOptions
   extends Omit<GpuShaderOptions, 'language' | 'allowTexture1D'> {}
 
+/** OCIO LUT metadata plus the texture and sampler bindings used by the generated WGSL. */
 export interface OcioWebGpuTexture extends OcioGpuTexture {
   texture: WebGpuBinding;
   sampler: WebGpuBinding;
 }
 
 export interface WebGpuShaderInfo {
+  /** Embeddable WGSL containing `functionName` plus an internal translation entry point. */
   shaderText: string;
+  /** Original OCIO Vulkan GLSL before normalization/translation. Useful for diagnostics. */
   sourceShaderText: string;
+  /** Callable OCIO transform function in `shaderText`; call it from your own WGSL entry point. */
   functionName: string;
   language: 'wgsl';
   sourceLanguage: 'glsl_vk_4.6';
+  /** OCIO GPU shader cache identifier, suitable for application-side pipeline/resource caches. */
   cacheId: string;
   uniformBufferSize: number;
+  /** Bind-group location of the OCIO uniform buffer, or null when the shader has none. */
   uniformBinding: WebGpuBinding | null;
   textures: OcioWebGpuTexture[];
   uniforms: OcioGpuUniform[];
@@ -359,6 +366,8 @@ export class Processor {
   applyRGBA8(rgba: Uint8Array | Uint8ClampedArray, options?: { copy?: boolean }): Uint8Array | Uint8ClampedArray;
   getGpuShaderInfo(options?: GpuShaderOptions): GpuShaderInfo;
   getGpuShaderText(options?: GpuShaderOptions): string;
+  /** Generate WGSL plus OCIO LUT/uniform binding metadata for WebGPU integration. */
   getWebGpuShaderInfo(options?: WebGpuShaderOptions): Promise<WebGpuShaderInfo>;
+  /** Generate only the translated WGSL text. */
   getWebGpuShaderText(options?: WebGpuShaderOptions): Promise<string>;
 }

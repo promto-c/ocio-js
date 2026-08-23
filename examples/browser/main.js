@@ -1,4 +1,8 @@
 import { ACES_CG_V2_CONFIG, createOCIO } from '@bb-studio/ocio';
+import {
+  createOcioWebGpuResources,
+  getOcioWebGpuNextBindGroupIndex
+} from '@bb-studio/ocio/webgpu';
 
 const width = 960;
 const height = 540;
@@ -324,7 +328,7 @@ async function createWebGPURenderer(canvas, adapter) {
           functionName: 'OCIODisplay',
           resourcePrefix: 'ocio_webgpu'
         });
-        const viewerGroup = getWebGpuViewerGroup(shaderInfo);
+        const viewerGroup = getOcioWebGpuNextBindGroupIndex(shaderInfo);
         const viewerShader = buildWebGpuViewerShader(shaderInfo, viewerGroup);
         const usedShader = `${shaderInfo.shaderText}\n\n${viewerShader}`;
         const module = device.createShaderModule({
@@ -347,12 +351,9 @@ async function createWebGPURenderer(canvas, adapter) {
         const pipeline = device.createRenderPipelineAsync
           ? await device.createRenderPipelineAsync(descriptor)
           : device.createRenderPipeline(descriptor);
-        const ocioBindGroups = createWebGpuOcioBindGroups(
-          device,
-          pipeline,
-          shaderInfo,
-          useFloat32Luts
-        );
+        const ocioResources = createOcioWebGpuResources(device, pipeline, shaderInfo, {
+          texturePrecision: useFloat32Luts ? 'float32' : 'float16'
+        });
         const viewerBindGroup = device.createBindGroup({
           label: 'OCIO demo viewer resources',
           layout: pipeline.getBindGroupLayout(viewerGroup),
@@ -366,7 +367,7 @@ async function createWebGPURenderer(canvas, adapter) {
           shaderInfo,
           usedShader,
           pipeline,
-          ocioBindGroups,
+          ocioResources,
           viewerBindGroup,
           viewerGroup
         };
@@ -405,7 +406,7 @@ async function createWebGPURenderer(canvas, adapter) {
         }]
       });
       pass.setPipeline(program.pipeline);
-      for (const [group, bindGroup] of program.ocioBindGroups) {
+      for (const [group, bindGroup] of program.ocioResources.bindGroups) {
         pass.setBindGroup(group, bindGroup);
       }
       pass.setBindGroup(program.viewerGroup, program.viewerBindGroup);
@@ -420,17 +421,6 @@ async function createWebGPURenderer(canvas, adapter) {
       };
     }
   };
-}
-
-function getWebGpuViewerGroup(shaderInfo) {
-  const groups = [];
-  if (shaderInfo.uniformBinding) {
-    groups.push(shaderInfo.uniformBinding.group);
-  }
-  for (const texture of shaderInfo.textures) {
-    groups.push(texture.texture.group, texture.sampler.group);
-  }
-  return (groups.length ? Math.max(...groups) : -1) + 1;
 }
 
 function buildWebGpuViewerShader(shaderInfo, viewerGroup) {
@@ -477,182 +467,6 @@ async function assertWebGpuShaderModule(module) {
     }).join('\n');
     throw new Error(`WebGPU WGSL compilation failed: ${detail}`);
   }
-}
-
-function createWebGpuOcioBindGroups(device, pipeline, shaderInfo, useFloat32) {
-  const entriesByGroup = new Map();
-  const retain = [];
-  const addEntry = (group, entry) => {
-    if (!entriesByGroup.has(group)) {
-      entriesByGroup.set(group, []);
-    }
-    entriesByGroup.get(group).push(entry);
-  };
-
-  if (shaderInfo.uniformBinding) {
-    const bytes = packWebGpuUniforms(shaderInfo);
-    const buffer = device.createBuffer({
-      label: 'OCIO uniforms',
-      size: Math.max(16, alignTo(bytes.byteLength, 16)),
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.UNIFORM
-    });
-    device.queue.writeBuffer(buffer, 0, bytes);
-    retain.push(buffer);
-    addEntry(shaderInfo.uniformBinding.group, {
-      binding: shaderInfo.uniformBinding.binding,
-      resource: { buffer }
-    });
-  }
-
-  for (const texture of shaderInfo.textures) {
-    const uploaded = createWebGpuOcioTexture(device, texture, useFloat32);
-    retain.push(uploaded.texture, uploaded.sampler);
-    addEntry(texture.texture.group, {
-      binding: texture.texture.binding,
-      resource: uploaded.texture.createView()
-    });
-    addEntry(texture.sampler.group, {
-      binding: texture.sampler.binding,
-      resource: uploaded.sampler
-    });
-  }
-
-  const bindGroups = new Map();
-  for (const [group, entries] of entriesByGroup) {
-    bindGroups.set(group, device.createBindGroup({
-      label: `OCIO resources group ${group}`,
-      layout: pipeline.getBindGroupLayout(group),
-      entries
-    }));
-  }
-  bindGroups.retain = retain;
-  return bindGroups;
-}
-
-function createWebGpuOcioTexture(device, textureInfo, useFloat32) {
-  if (textureInfo.dimensions !== 2 && textureInfo.dimensions !== 3) {
-    throw new Error(`Unsupported OCIO WebGPU texture dimension: ${textureInfo.dimensions}`);
-  }
-
-  const componentCount = textureInfo.channels === 1 ? 1 : 4;
-  const format = textureInfo.channels === 1
-    ? (useFloat32 ? 'r32float' : 'r16float')
-    : (useFloat32 ? 'rgba32float' : 'rgba16float');
-  const data = convertWebGpuTextureValues(textureInfo, useFloat32);
-  const bytesPerComponent = useFloat32 ? 4 : 2;
-  const gpuTexture = device.createTexture({
-    label: textureInfo.name,
-    size: {
-      width: textureInfo.width,
-      height: textureInfo.height,
-      depthOrArrayLayers: textureInfo.dimensions === 3 ? textureInfo.depth : 1
-    },
-    dimension: textureInfo.dimensions === 3 ? '3d' : '2d',
-    format,
-    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
-  });
-  device.queue.writeTexture(
-    { texture: gpuTexture },
-    data,
-    {
-      bytesPerRow: textureInfo.width * componentCount * bytesPerComponent,
-      rowsPerImage: textureInfo.height
-    },
-    {
-      width: textureInfo.width,
-      height: textureInfo.height,
-      depthOrArrayLayers: textureInfo.dimensions === 3 ? textureInfo.depth : 1
-    }
-  );
-  const filter = textureInfo.interpolation === 'nearest' ? 'nearest' : 'linear';
-  const sampler = device.createSampler({
-    label: textureInfo.samplerName,
-    magFilter: filter,
-    minFilter: filter,
-    addressModeU: 'clamp-to-edge',
-    addressModeV: 'clamp-to-edge',
-    addressModeW: 'clamp-to-edge'
-  });
-  return { texture: gpuTexture, sampler };
-}
-
-function convertWebGpuTextureValues(textureInfo, useFloat32) {
-  const values = textureInfo.values;
-  let expanded = values;
-  if (textureInfo.channels === 3) {
-    expanded = new Float32Array((values.length / 3) * 4);
-    for (let source = 0, target = 0; source < values.length; source += 3, target += 4) {
-      expanded[target] = values[source];
-      expanded[target + 1] = values[source + 1];
-      expanded[target + 2] = values[source + 2];
-      expanded[target + 3] = 1;
-    }
-  }
-  if (useFloat32) {
-    return expanded;
-  }
-
-  const half = new Uint16Array(expanded.length);
-  for (let index = 0; index < expanded.length; index += 1) {
-    half[index] = float32ToFloat16(expanded[index]);
-  }
-  return half;
-}
-
-function float32ToFloat16(value) {
-  const floatView = new Float32Array(1);
-  const intView = new Uint32Array(floatView.buffer);
-  floatView[0] = value;
-  const bits = intView[0];
-  const sign = (bits >>> 16) & 0x8000;
-  let exponent = ((bits >>> 23) & 0xff) - 127 + 15;
-  let mantissa = bits & 0x7fffff;
-
-  if (exponent <= 0) {
-    if (exponent < -10) return sign;
-    mantissa = (mantissa | 0x800000) >>> (1 - exponent);
-    return sign | ((mantissa + 0x1000) >>> 13);
-  }
-  if (exponent >= 31) {
-    return sign | (mantissa ? 0x7e00 : 0x7c00);
-  }
-  mantissa += 0x1000;
-  if (mantissa & 0x800000) {
-    mantissa = 0;
-    exponent += 1;
-    if (exponent >= 31) return sign | 0x7c00;
-  }
-  return sign | (exponent << 10) | (mantissa >>> 13);
-}
-
-function packWebGpuUniforms(shaderInfo) {
-  const size = Math.max(0, shaderInfo.uniformBufferSize);
-  const buffer = new ArrayBuffer(size);
-  const view = new DataView(buffer);
-  const writeValues = (offset, values, integer = false) => {
-    values.forEach((value, index) => {
-      const position = offset + index * 4;
-      if (position + 4 > buffer.byteLength) return;
-      if (integer) view.setInt32(position, Number(value), true);
-      else view.setFloat32(position, Number(value), true);
-    });
-  };
-
-  for (const uniform of shaderInfo.uniforms) {
-    const values = Array.isArray(uniform.value) ? uniform.value : [uniform.value];
-    if (uniform.type === 'bool') {
-      writeValues(uniform.bufferOffset, [uniform.value ? 1 : 0], true);
-    } else if (uniform.type === 'vector_int') {
-      writeValues(uniform.bufferOffset, values, true);
-    } else {
-      writeValues(uniform.bufferOffset, values);
-    }
-  }
-  return new Uint8Array(buffer);
-}
-
-function alignTo(value, alignment) {
-  return Math.ceil(value / alignment) * alignment;
 }
 
 function compileShader(gl, type, source) {
