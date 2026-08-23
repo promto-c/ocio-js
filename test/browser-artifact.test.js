@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import test from 'node:test';
 import { dirname, join } from 'node:path';
@@ -19,6 +20,8 @@ const webGpuShaderLoaderPath = join(root, 'src', 'webgpu-shader-loader.js');
 const srcIndexPath = join(root, 'src', 'index.js');
 const demoHtmlPath = join(root, 'examples', 'browser', 'index.html');
 const demoMainPath = join(root, 'examples', 'browser', 'main.js');
+const buildDemoPath = join(root, 'scripts', 'build-demo.mjs');
+const demoOutputPath = join(root, 'demo-dist');
 
 function assertConditionalTarget(target, nodePath, defaultPath) {
   assert.equal(target?.node, nodePath);
@@ -76,6 +79,21 @@ test('package routes and ships required runtime files', () => {
     'src/ocio-js.d.ts',
   ]) {
     assertPackageFile(path);
+  }
+});
+
+test('static demo ships every packaged runtime file', () => {
+  execFileSync(process.execPath, [buildDemoPath], { cwd: root });
+
+  const runtimeFiles = packageJson.files.filter((path) => (
+    path.startsWith('src/') || path.startsWith('dist/')
+  ));
+  for (const path of runtimeFiles) {
+    assert.equal(
+      existsSync(join(demoOutputPath, path)),
+      true,
+      `Static demo must include packaged runtime file ${path}`,
+    );
   }
 });
 

@@ -4,9 +4,8 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = normalize(join(fileURLToPath(new URL('..', import.meta.url))));
-const serveStaticBuild = process.argv.includes('--static');
-const root = serveStaticBuild ? join(repoRoot, 'demo-dist') : repoRoot;
-const defaultDocument = serveStaticBuild ? '/index.html' : '/examples/browser/index.html';
+const root = join(repoRoot, 'demo-dist');
+const defaultDocument = '/index.html';
 const defaultPort = 4173;
 const requestedPort = parsePort(process.env.PORT, defaultPort);
 const shouldTryNextPort = process.env.PORT === undefined;
@@ -116,8 +115,7 @@ try {
     console.warn(`Port ${requestedPort} is already in use; using ${port} instead.`);
   }
 
-  const demoPath = serveStaticBuild ? '/' : '/examples/browser/';
-  console.log(`OCIO browser demo: http://${formatHostForUrl(host)}:${port}${demoPath}`);
+  console.log(`OCIO browser demo: http://${formatHostForUrl(host)}:${port}/`);
 } catch (error) {
   if (error.code === 'EADDRINUSE') {
     console.error(`Port ${requestedPort} is already in use. Set PORT to another port and try again.`);

@@ -5,17 +5,10 @@ import { fileURLToPath } from 'node:url';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const output = join(root, 'demo-dist');
 
-const runtimeFiles = [
-  'src/index.js',
-  'src/wasm-url.js',
-  'src/webgpu.js',
-  'src/webgpu-shader.js',
-  'src/naga-runtime.js',
-  'dist/ocio-wasm.js',
-  'dist/ocio-wasm.wasm',
-  'dist/naga-wasm.js',
-  'dist/naga-wasm_bg.wasm',
-];
+const packageJson = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
+const runtimeFiles = packageJson.files.filter((path) => (
+  path.startsWith('src/') || path.startsWith('dist/')
+));
 
 await rm(output, { recursive: true, force: true });
 await mkdir(output, { recursive: true });
