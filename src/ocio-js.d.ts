@@ -331,6 +331,8 @@ export interface OcioRuntimeConfigInfo {
   viewsByDisplay: Record<string, ViewInfo[]>;
   defaultDisplay: string;
   defaultViewsByDisplay: Record<string, string>;
+  /** Color-space-aware default view for each OCIO role and display. */
+  defaultViewsByRole: Record<string, Record<string, string>>;
   looks: LookInfo[];
   namedTransforms: NamedTransformInfo[];
   fileRules: FileRuleInfo[];

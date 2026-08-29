@@ -124,6 +124,15 @@ test('runtime loads and inspects built-in configs without changing active state'
     const active = runtime.loadBuiltinConfig(ACES_CG_V4_CONFIG);
     assert.equal(active.id, ACES_CG_V4_CONFIG);
     assert.equal(runtime.activeConfigId, ACES_CG_V4_CONFIG);
+    assert.equal(
+      active.defaultViewsByRole.scene_linear['sRGB - Display'],
+      runtime.getDefaultView('sRGB - Display', 'ACEScg')
+    );
+    assert.equal(active.defaultViewsByRole.data['sRGB - Display'], 'Raw');
+    assert.notEqual(
+      active.defaultViewsByRole.data['sRGB - Display'],
+      active.defaultViewsByDisplay['sRGB - Display']
+    );
 
     const inspected = runtime.inspectBuiltinConfig(ACES_CG_V2_CONFIG);
     assert.equal(inspected.id, ACES_CG_V2_CONFIG);

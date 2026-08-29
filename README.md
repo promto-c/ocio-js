@@ -105,6 +105,8 @@ runtime.dispose();
 
 The runtime keeps GLSL extraction synchronous and WGSL extraction asynchronous. Processor identity and caches are scoped by the active config and canonicalized OCIO context. `invalidateContext()`, `clearCaches()`, `getDiagnostics()`, and `dispose()` provide explicit lifecycle control.
 
+Config metadata includes both `defaultViewsByDisplay` and color-space-aware `defaultViewsByRole`, so callers can inspect role-specific viewing rules without making the inspected config active.
+
 External transport stays outside the package. Fetch, Tauri, File System Access, WebDAV, or another host layer should obtain bytes and pass a config package to OCIO:
 
 ```js

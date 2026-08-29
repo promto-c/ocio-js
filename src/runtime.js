@@ -430,6 +430,18 @@ export class OcioRuntime {
         config.getDefaultView(display) || viewsByDisplay[display]?.[0]?.name || ''
       ])
     );
+    const roles = config.listRoles();
+    const defaultViewsByRole = Object.fromEntries(
+      roles.map(({ name, colorSpace }) => [
+        name,
+        Object.fromEntries(
+          displays.map((display) => [
+            display,
+            config.getDefaultView(display, colorSpace) || defaultViewsByDisplay[display] || ''
+          ])
+        )
+      ])
+    );
     return freezeDeep({
       id,
       version: config.version,
@@ -437,11 +449,12 @@ export class OcioRuntime {
       ocioVersionHex: this.ocio.versionHex,
       builtinConfigs: this.ocio.listBuiltinConfigs(),
       colorSpaces: config.listColorSpaces(),
-      roles: config.listRoles(),
+      roles,
       displays,
       viewsByDisplay,
       defaultDisplay: config.getDefaultDisplay() || displays[0] || '',
       defaultViewsByDisplay,
+      defaultViewsByRole,
       looks: config.listLooks().map((name) => config.getLook(name)),
       namedTransforms: config.listNamedTransforms().map((name) => config.getNamedTransform(name)),
       fileRules: config.listFileRules(),
