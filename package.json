@@ -64,6 +64,7 @@
     "dist/ocio-wasm.wasm",
     "src/index.js",
     "src/index.vite.js",
+    "src/runtime.js",
     "src/wasm-url.js",
     "src/wasm-url.vite.js",
     "src/ocio-js.d.ts",

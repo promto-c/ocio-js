@@ -297,6 +297,94 @@ export interface WebGpuShaderInfo {
   uniforms: OcioGpuUniform[];
 }
 
+export interface OcioConfigPackageFile {
+  relativePath: string;
+  data: ArrayBufferView;
+}
+
+export interface OcioConfigPackage {
+  configRelativePath: string;
+  files: readonly OcioConfigPackageFile[];
+}
+
+export interface NormalizedOcioConfigPackage {
+  configRelativePath: string;
+  files: Array<{ relativePath: string; data: Uint8Array }>;
+}
+
+export interface OcioProcessorRequest {
+  transforms: TransformDescriptor | readonly TransformDescriptor[];
+  optimization?: OptimizationValue;
+  direction?: TransformDirectionValue;
+  context?: OcioContextVariables;
+}
+
+export interface OcioRuntimeConfigInfo {
+  id: string;
+  version: { major: number; minor: number };
+  ocioVersion: string;
+  ocioVersionHex: number;
+  builtinConfigs: BuiltinConfigInfo[];
+  colorSpaces: ColorSpaceInfo[];
+  roles: RoleInfo[];
+  displays: string[];
+  viewsByDisplay: Record<string, ViewInfo[]>;
+  defaultDisplay: string;
+  defaultViewsByDisplay: Record<string, string>;
+  looks: LookInfo[];
+  namedTransforms: NamedTransformInfo[];
+  fileRules: FileRuleInfo[];
+  fileTransformFormats: FileTransformFormatInfo[];
+}
+
+export interface OcioRuntimeDiagnostics {
+  activeConfigId: string | null;
+  processorCacheEntries: number;
+  gpuShaderCacheEntries: number;
+  webGpuShaderCacheEntries: number;
+  rgbTransformCacheEntries: number;
+  latestFailure: string | null;
+}
+
+export interface CreateOcioRuntimeOptions extends CreateOCIOOptions {
+  maxRgbCacheEntries?: number;
+}
+
+export function normalizeOcioConfigPackage(source: OcioConfigPackage): NormalizedOcioConfigPackage;
+
+export class OcioRuntime {
+  readonly ocio: OCIO;
+  readonly activeConfigId: string | null;
+
+  constructor(ocio: OCIO, options?: { maxRgbCacheEntries?: number });
+  getConfigInfo(): OcioRuntimeConfigInfo | null;
+  loadBuiltinConfig(name: string): OcioRuntimeConfigInfo;
+  inspectBuiltinConfig(name: string): OcioRuntimeConfigInfo;
+  loadConfigPackage(source: OcioConfigPackage, options?: { id?: string }): OcioRuntimeConfigInfo;
+  inspectConfigPackage(source: OcioConfigPackage, options?: { id?: string }): OcioRuntimeConfigInfo;
+  mountFile(path: string, data: ArrayBufferView): string;
+  matchFileRule(filePath: string): FileRuleMatch | null;
+  getViews(display: string): ViewInfo[];
+  getDefaultView(display: string, colorSpace?: string): string;
+  getGpuShaderInfo(request: OcioProcessorRequest, options?: GpuShaderOptions): GpuShaderInfo | null;
+  getWebGpuShaderInfo(
+    request: OcioProcessorRequest,
+    options?: WebGpuShaderOptions,
+  ): Promise<WebGpuShaderInfo | null>;
+  transformRgb(
+    source: string,
+    destination: string,
+    color: readonly [number, number, number] | Float32Array,
+    options?: { optimization?: OptimizationValue; context?: OcioContextVariables },
+  ): [number, number, number];
+  invalidateContext(context: OcioContextVariables): void;
+  clearCaches(): void;
+  getDiagnostics(): OcioRuntimeDiagnostics;
+  dispose(): void;
+}
+
+export function createOcioRuntime(options?: CreateOcioRuntimeOptions): Promise<OcioRuntime>;
+
 export function createOCIO(options?: CreateOCIOOptions): Promise<OCIO>;
 
 export class OCIO {
@@ -328,6 +416,8 @@ export class Config {
   getFileRule(index: number): FileRuleInfo;
   listFileRules(): FileRuleInfo[];
   matchFileRule(filePath: string): FileRuleMatch | null;
+  getViews(display: string): ViewInfo[];
+  getDefaultView(display: string, colorSpace?: string): string;
   listDisplays(): string[];
   getDefaultDisplay(): string;
   listViews(display: string): ViewInfo[];

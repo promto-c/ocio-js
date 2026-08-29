@@ -75,6 +75,50 @@ processor.dispose();
 config.dispose();
 ```
 
+## Managed Runtime
+
+Use `createOcioRuntime()` when an application needs one active config plus reusable processor and shader caches. The low-level `createOCIO()` / `Config` / `Processor` API remains available for direct control.
+
+```js
+import { createOcioRuntime } from '@bb-studio/ocio';
+
+const runtime = await createOcioRuntime();
+const config = runtime.loadBuiltinConfig('ocio://cg-config-v4.0.0_aces-v2.0_ocio-v2.5');
+
+const request = {
+  transforms: {
+    type: 'colorSpace',
+    source: 'ACEScg',
+    destination: 'ACES2065-1'
+  },
+  optimization: 'lossless',
+  context: { SHOT: '010' }
+};
+
+const glsl = runtime.getGpuShaderInfo(request, { language: 'glsl_es_3.0' });
+const wgsl = await runtime.getWebGpuShaderInfo(request);
+const rgb = runtime.transformRgb('ACEScg', 'ACES2065-1', [0.18, 0.18, 0.18]);
+
+console.log(config.defaultDisplay, glsl?.cacheId, wgsl?.cacheId, rgb);
+runtime.dispose();
+```
+
+The runtime keeps GLSL extraction synchronous and WGSL extraction asynchronous. Processor identity and caches are scoped by the active config and canonicalized OCIO context. `invalidateContext()`, `clearCaches()`, `getDiagnostics()`, and `dispose()` provide explicit lifecycle control.
+
+External transport stays outside the package. Fetch, Tauri, File System Access, WebDAV, or another host layer should obtain bytes and pass a config package to OCIO:
+
+```js
+runtime.loadConfigPackage({
+  configRelativePath: 'config.ocio',
+  files: [
+    { relativePath: 'config.ocio', data: configBytes },
+    { relativePath: 'luts/show.cube', data: lutBytes }
+  ]
+}, { id: 'show-config' });
+```
+
+Package paths are normalized and validated before they are mounted into the OCIO virtual filesystem. Loading a replacement is atomic: a candidate must parse and validate before it replaces the active config. `inspectConfigPackage()` performs the same validation without changing active runtime state.
+
 ## File Rules
 
 Resolve media paths through the active config instead of reproducing OCIO matching rules:

@@ -18,6 +18,7 @@ const webGpuShaderPath = join(root, 'src', 'webgpu-shader.js');
 const webGpuShaderVitePath = join(root, 'src', 'webgpu-shader.vite.js');
 const webGpuShaderLoaderPath = join(root, 'src', 'webgpu-shader-loader.js');
 const srcIndexPath = join(root, 'src', 'index.js');
+const runtimePath = join(root, 'src', 'runtime.js');
 const demoHtmlPath = join(root, 'examples', 'browser', 'index.html');
 const demoMainPath = join(root, 'examples', 'browser', 'main.js');
 const buildDemoPath = join(root, 'scripts', 'build-demo.mjs');
@@ -65,6 +66,7 @@ test('package routes and ships required runtime files', () => {
     'dist/naga-wasm_bg.wasm',
     'src/index.js',
     'src/index.vite.js',
+    'src/runtime.js',
     'src/wasm-url.js',
     'src/wasm-url.vite.js',
     'src/naga-runtime.js',
@@ -116,6 +118,7 @@ test('built browser runtimes exist and avoid Node.js built-ins', () => {
     webGpuShaderPath,
     webGpuShaderVitePath,
     webGpuShaderLoaderPath,
+    runtimePath,
   ]) {
     const source = readFileSync(path, 'utf8');
     assert.doesNotMatch(source, /['"]node:[^'"]+['"]/);
@@ -137,6 +140,8 @@ test('Vite entry selects the Vite-safe Naga shader builder', () => {
 
   assert.match(source, /configureWebGpuShaderBuilderLoader/);
   assert.match(source, /import\('\.\/webgpu-shader\.vite\.js'\)/);
+  assert.match(source, /export async function createOcioRuntime/);
+  assert.match(source, /const ocio = await createOCIO\(ocioOptions\)/);
   assert.match(shaderSource, /from '\.\/naga-runtime\.vite\.js'/);
 });
 

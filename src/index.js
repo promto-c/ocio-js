@@ -1,6 +1,9 @@
 import { loadWebGpuShaderBuilder } from './webgpu-shader-loader.js';
 import OcioWasmModule from '#ocio-wasm';
 import DEFAULT_WASM_URL from './wasm-url.js';
+import { OcioRuntime, normalizeOcioConfigPackage } from './runtime.js';
+
+export { OcioRuntime, normalizeOcioConfigPackage };
 
 export const ACES_CG_V2_CONFIG = 'ocio://cg-config-v2.2.0_aces-v1.3_ocio-v2.4';
 export const ACES_STUDIO_V2_CONFIG = 'ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4';
@@ -170,6 +173,12 @@ export async function createOCIO(options = {}) {
   };
 
   return new OCIO(await moduleFactory(moduleOptions));
+}
+
+export async function createOcioRuntime(options = {}) {
+  const { maxRgbCacheEntries, ...ocioOptions } = options;
+  const ocio = await createOCIO(ocioOptions);
+  return new OcioRuntime(ocio, { maxRgbCacheEntries });
 }
 
 export class OCIO {
